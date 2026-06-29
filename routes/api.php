@@ -1,0 +1,23 @@
+<?php
+
+use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Route;
+use App\Http\Controllers\Api\AuthController;
+use App\Http\Controllers\Api\ResumeController;
+
+Route::post('/register', [AuthController::class, 'register']);
+Route::post('/login', [AuthController::class, 'login']);
+
+Route::middleware('auth:sanctum')->group(function () {
+
+    Route::get('/user', function (Request $request) {
+        return $request->user();
+    });
+
+    Route::post('/resumes', [ResumeController::class, 'store']);
+    Route::get('/resumes', [ResumeController::class, 'index']);
+    Route::get('/resumes/{id}', [ResumeController::class, 'show']);
+    Route::put('/resumes/{id}', [ResumeController::class, 'update']);
+    Route::delete('/resumes/{id}', [ResumeController::class, 'destroy']);
+
+});
