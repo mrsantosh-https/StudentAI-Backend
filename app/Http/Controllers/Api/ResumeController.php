@@ -49,7 +49,33 @@ public function destroy(Request $request, $id)
         'message' => 'Resume deleted successfully'
     ]);
 }
+public function analytics(Request $request)
+{
+    $user = $request->user();
 
+    return response()->json([
+        'total_resumes' => $user->resumes()->count(),
+        'latest_resume' => $user->resumes()->latest()->first(),
+        'profile_completion' => $this->profileCompletion($user),
+    ]);
+}
+
+private function profileCompletion($user)
+{
+    $fields = [
+        $user->name,
+        $user->email,
+        $user->phone,
+        $user->linkedin,
+        $user->github,
+        $user->bio,
+        $user->profile_photo,
+    ];
+
+    $filled = collect($fields)->filter()->count();
+
+    return round(($filled / count($fields)) * 100);
+}
 public function update(Request $request, $id)
 {
     $resume = Resume::where('user_id', $request->user()->id)

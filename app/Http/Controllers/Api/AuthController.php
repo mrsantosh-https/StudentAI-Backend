@@ -7,6 +7,7 @@ use App\Models\User;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Hash;
 
+
 class AuthController extends Controller
 {
     public function register(Request $request)
@@ -53,5 +54,56 @@ return response()->json([
     'token' => $token,
     'user' => $user
 ]);
+}
+
+public function profile(Request $request)
+{
+    return response()->json($request->user());
+}
+
+public function updateProfile(Request $request)
+{
+    $user = $request->user();
+
+    $request->validate([
+        'name' => 'required|string|max:255',
+        'phone' => 'nullable|string|max:20',
+        'linkedin' => 'nullable|string|max:255',
+        'github' => 'nullable|string|max:255',
+        'bio' => 'nullable|string',
+    ]);
+
+    $user->update([
+        'name' => $request->name,
+        'phone' => $request->phone,
+        'linkedin' => $request->linkedin,
+        'github' => $request->github,
+        'bio' => $request->bio,
+    ]);
+
+    return response()->json([
+        'message' => 'Profile updated successfully',
+        'user' => $user,
+    ]);
+}
+public function uploadProfilePhoto(Request $request)
+{
+    $request->validate([
+        'profile_photo' => 'required|image|mimes:jpg,jpeg,png|max:2048',
+    ]);
+
+    $user = $request->user();
+
+    $path = $request->file('profile_photo')->store('profile_photos', 'public');
+
+    $user->update([
+        'profile_photo' => $path,
+    ]);
+
+    return response()->json([
+        'message' => 'Profile photo uploaded successfully',
+        'profile_photo' => asset('storage/' . $path),
+        'user' => $user,
+    ]);
 }
 }

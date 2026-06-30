@@ -4,6 +4,7 @@ namespace App\Models;
 
 // use Illuminate\Contracts\Auth\MustVerifyEmail;
 use App\Models\Resume;
+use App\Models\JobApplication;
 use Database\Factories\UserFactory;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Foundation\Auth\User as Authenticatable;
@@ -24,6 +25,11 @@ class User extends Authenticatable
         'name',
         'email',
         'password',
+        'phone',
+        'linkedin',
+        'github',
+        'bio',
+        'profile_photo',
     ];
 
     /**
@@ -51,5 +57,9 @@ class User extends Authenticatable
     public function resumes()
 {
     return $this->hasMany(Resume::class);
+}
+public function jobApplications()
+{
+    return $this->hasMany(JobApplication::class);
 }
 }
