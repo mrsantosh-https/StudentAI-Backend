@@ -49,6 +49,24 @@ public function destroy(Request $request, $id)
         'message' => 'Resume deleted successfully'
     ]);
 }
+public function updateAtsScore(Request $request, $id)
+{
+    $request->validate([
+        'ats_score' => 'required|integer|min:0|max:100',
+    ]);
+
+    $resume = Resume::where('user_id', $request->user()->id)
+        ->findOrFail($id);
+
+    $resume->update([
+        'ats_score' => $request->ats_score,
+    ]);
+
+    return response()->json([
+        'message' => 'ATS score saved successfully',
+        'resume' => $resume,
+    ]);
+}
 public function analytics(Request $request)
 {
     $user = $request->user();
@@ -57,6 +75,10 @@ public function analytics(Request $request)
         'total_resumes' => $user->resumes()->count(),
         'latest_resume' => $user->resumes()->latest()->first(),
         'profile_completion' => $this->profileCompletion($user),
+        'total_jobs' => $user->jobApplications()->count(),
+        'interview_jobs' => $user->jobApplications()->where('status', 'Interview')->count(),
+        'offer_jobs' => $user->jobApplications()->where('status', 'Offer')->count(),
+        'average_ats_score' => round($user->resumes()->avg('ats_score') ?? 0),
     ]);
 }
 

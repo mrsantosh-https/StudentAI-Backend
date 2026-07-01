@@ -20,5 +20,6 @@ class Resume extends Model
         'skills',
         'projects',
         'experience',
+        'ats_score',
     ];
 }
