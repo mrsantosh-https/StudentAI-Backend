@@ -6,6 +6,7 @@ use App\Http\Controllers\Controller;
 use App\Models\User;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Hash;
+use App\Models\Notification;
 
 
 class AuthController extends Controller
@@ -22,6 +23,13 @@ class AuthController extends Controller
             'name' => $request->name,
             'email' => $request->email,
             'password' => Hash::make($request->password),
+        ]);
+
+        Notification::create([
+            'user_id' => $user->id,
+            'title' => 'Welcome to StudentAI',
+            'message' => 'Your account has been created successfully. Welcome to StudentAI!',
+            'type' => 'success',
         ]);
 
         return response()->json([
@@ -44,6 +52,12 @@ public function login(Request $request)
             'message' => 'Invalid login details'
         ], 401);
     }
+        Notification::create([
+        'user_id' => $user->id,
+        'title' => 'Login Successful',
+        'message' => 'You have logged in successfully.',
+        'type' => 'info',
+    ]);
 
    $token = $user->createToken('studentai-token')->plainTextToken;
 

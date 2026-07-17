@@ -11,6 +11,7 @@ use Illuminate\Foundation\Auth\User as Authenticatable;
 use Illuminate\Notifications\Notifiable;
 use Laravel\Sanctum\HasApiTokens;
 
+
 class User extends Authenticatable
 {
     /** @use HasFactory<UserFactory> */
@@ -61,5 +62,9 @@ class User extends Authenticatable
 public function jobApplications()
 {
     return $this->hasMany(JobApplication::class);
+}
+public function notifications()
+{
+    return $this->hasMany(Notification::class);
 }
 }

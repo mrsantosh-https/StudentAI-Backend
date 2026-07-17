@@ -4,9 +4,16 @@ use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Route;
 use App\Http\Controllers\Api\AuthController;
 use App\Http\Controllers\Api\ResumeController;
+use App\Http\Controllers\NotificationController;
+use App\Http\Controllers\Api\ProfileController;
+use App\Http\Controllers\Api\DashboardController;
+use App\Http\Controllers\Api\AiCareerCoachController;
 use App\Http\Controllers\Api\JobApplicationController;
 use App\Http\Controllers\Api\InterviewHistoryController;
+use App\Http\Controllers\Api\ForgotPasswordController;
 
+Route::post('/forgot-password', [ForgotPasswordController::class, 'sendResetLink']);
+Route::post('/reset-password', [ForgotPasswordController::class, 'resetPassword']);
 Route::post('/register', [AuthController::class, 'register']);
 Route::post('/login', [AuthController::class, 'login']);
 
@@ -34,4 +41,25 @@ Route::middleware('auth:sanctum')->group(function () {
 
     Route::delete('/interview-history/{id}', [InterviewHistoryController::class, 'destroy']);
 
+    Route::get('/profile', [ProfileController::class, 'profile']);
+    Route::put('/profile', [ProfileController::class, 'updateProfile']);
+    Route::post('/profile/photo', [ProfileController::class, 'uploadProfilePhoto']);
+    Route::post('/change-password', [ProfileController::class, 'changePassword']);
+
+    Route::get('/notifications', [NotificationController::class, 'index']);
+
+    Route::post('/notifications/read/{id}', [NotificationController::class, 'markAsRead']);
+
+    Route::delete('/notifications/{id}', [NotificationController::class, 'destroy']);
+
+    Route::delete('/delete-account', [ProfileController::class, 'deleteAccount']);
+
+    Route::middleware('auth:sanctum')->get('/dashboard-stats', [DashboardController::class, 'stats']);
+
+    Route::middleware('auth:sanctum')->post('/ai-chat', [AiCareerCoachController::class, 'chat']);
+
+Route::middleware('auth:sanctum')->post('/ai-chat', [AiCareerCoachController::class, 'chat']);
+Route::middleware('auth:sanctum')->get('/ai-chats', [AiCareerCoachController::class, 'history']);
+Route::middleware('auth:sanctum')->delete('/ai-chats/{id}', [AiCareerCoachController::class, 'deleteChat']);
+Route::middleware('auth:sanctum')->post('/ai-chats/{id}/feedback', [AiCareerCoachController::class, 'feedback']);
 });
