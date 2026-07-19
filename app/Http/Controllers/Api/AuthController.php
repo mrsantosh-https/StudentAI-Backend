@@ -49,25 +49,18 @@ public function login(Request $request)
 
     if (!$user || !Hash::check($request->password, $user->password)) {
         return response()->json([
-            'message' => 'Invalid login details'
+            'message' => 'Invalid credentials'
         ], 401);
     }
-        Notification::create([
-        'user_id' => $user->id,
-        'title' => 'Login Successful',
-        'message' => 'You have logged in successfully.',
-        'type' => 'info',
+
+    // 👇 Login successful hone ke baad token generate karo
+    $token = $user->createToken('auth_token')->plainTextToken;
+
+    return response()->json([
+        'message' => 'Login successful',
+        'token' => $token,
+        'user' => $user,
     ]);
-
-   $token = $user->createToken('studentai-token')->plainTextToken;
-
-   $token = $user->createToken('studentai-token')->plainTextToken;
-
-return response()->json([
-    'message' => 'Login successful',
-    'token' => $token,
-    'user' => $user
-]);
 }
 
 public function profile(Request $request)
