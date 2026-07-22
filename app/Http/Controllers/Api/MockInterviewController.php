@@ -1,7 +1,7 @@
 <?php
 
 namespace App\Http\Controllers\Api;
-
+use Illuminate\Support\Str;
 use App\Http\Controllers\Controller;
 use Illuminate\Http\Request;
 use App\Models\MockInterview;
@@ -51,13 +51,15 @@ public function start(Request $request)
     }
 
     $question = $response->json('choices.0.message.content');
-
+    $sessionId = (string) Str::uuid();
     $chat = MockInterview::create([
         'user_id' => auth()->id(),
+        'interview_session_id' => $sessionId,
         'role' => $request->role,
         'experience' => $request->experience,
         'question_no' => 1,
         'question' => $question,
+        'is_completed' => false,
     ]);
 
     return response()->json([
@@ -77,7 +79,21 @@ public function answer(Request $request)
         ->where('user_id', auth()->id())
         ->firstOrFail();
 
-    $prompt = "
+    // Same question ko dobara submit hone se roke
+    if (!empty($interview->answer)) {
+        return response()->json([
+            'success' => false,
+            'message' => 'Is question ka answer pehle hi submit ho chuka hai.',
+        ], 422);
+    }
+
+    /*
+    |--------------------------------------------------------------------------
+    | Answer evaluate karo
+    |--------------------------------------------------------------------------
+    */
+
+    $evaluationPrompt = "
     You are an expert technical interviewer.
 
     Evaluate the candidate's answer.
@@ -87,72 +103,253 @@ public function answer(Request $request)
     Question: {$interview->question}
     Candidate Answer: {$request->answer}
 
-    Return valid JSON only in this format:
+    Return valid JSON only in this exact format:
+
     {
         \"score\": 8,
-        \"feedback\": \"Clear feedback here\",
+        \"feedback\": \"Clear and useful feedback\",
         \"improvement\": \"How the candidate can improve\"
     }
 
-    Score must be between 1 and 10.
+    Important rules:
+    - Score must be between 1 and 10.
+    - Do not return markdown.
+    - Do not return code blocks.
+    - Return JSON only.
     ";
 
-    $response = Http::withHeaders([
+    $evaluationResponse = Http::withHeaders([
         'Authorization' => 'Bearer ' . env('GROQ_API_KEY'),
         'Content-Type' => 'application/json',
-    ])->post('https://api.groq.com/openai/v1/chat/completions', [
-        'model' => 'llama-3.1-8b-instant',
-        'messages' => [
-            [
-                'role' => 'user',
-                'content' => $prompt,
+    ])->post(
+        'https://api.groq.com/openai/v1/chat/completions',
+        [
+            'model' => 'llama-3.1-8b-instant',
+            'messages' => [
+                [
+                    'role' => 'user',
+                    'content' => $evaluationPrompt,
+                ],
             ],
-        ],
-        'temperature' => 0.3,
-    ]);
+            'temperature' => 0.3,
+        ]
+    );
 
-    if (!$response->successful()) {
+    if (!$evaluationResponse->successful()) {
         return response()->json([
             'success' => false,
             'message' => 'Groq API se answer evaluate nahi ho saka.',
-            'error' => $response->json(),
+            'error' => $evaluationResponse->json(),
         ], 500);
     }
 
-    $content = $response->json('choices.0.message.content');
+    $content = $evaluationResponse->json(
+        'choices.0.message.content'
+    );
 
-    // Markdown code block remove karega, agar Groq ```json return kare
-    $content = preg_replace('/```json|```/i', '', $content);
-    $result = json_decode(trim($content), true);
+    $content = preg_replace(
+        '/```json|```/i',
+        '',
+        (string) $content
+    );
 
-    if (!is_array($result)) {
+    $evaluation = json_decode(trim($content), true);
+
+    if (!is_array($evaluation)) {
         return response()->json([
             'success' => false,
-            'message' => 'AI response ka format invalid hai.',
+            'message' => 'AI evaluation response ka format invalid hai.',
             'raw_response' => $content,
         ], 500);
     }
 
-    $score = max(1, min(10, (int) ($result['score'] ?? 1)));
-    $feedback = $result['feedback'] ?? 'Feedback available nahi hai.';
-    $improvement = $result['improvement'] ?? '';
+    $score = max(
+        1,
+        min(5, (int) ($evaluation['score'] ?? 1))
+    );
+
+    $feedback = $evaluation['feedback']
+        ?? 'Feedback available nahi hai.';
+
+    $improvement = $evaluation['improvement'] ?? '';
 
     $fullFeedback = $feedback;
 
-    if ($improvement) {
+    if (!empty($improvement)) {
         $fullFeedback .= "\n\nImprovement: " . $improvement;
     }
 
     $interview->update([
-        'answer' => $request->answer,
+        'answer' => trim($request->answer),
         'feedback' => $fullFeedback,
         'score' => $score,
+    ]);
+
+    $evaluatedInterview = $interview->fresh();
+
+    /*
+    |--------------------------------------------------------------------------
+    | Question 10 complete hone par interview finish
+    |--------------------------------------------------------------------------
+    */
+
+    if ((int) $interview->question_no >= 5) {
+        $interview->update([
+            'is_completed' => true,
+        ]);
+
+        $sessionRecords = MockInterview::where(
+            'user_id',
+            auth()->id()
+        )
+            ->where(
+                'interview_session_id',
+                $interview->interview_session_id
+            )
+            ->get();
+
+        MockInterview::where(
+            'user_id',
+            auth()->id()
+        )
+            ->where(
+                'interview_session_id',
+                $interview->interview_session_id
+            )
+            ->update([
+                'is_completed' => true,
+            ]);
+
+        $averageScore = round(
+            (float) $sessionRecords
+                ->whereNotNull('score')
+                ->avg('score'),
+            1
+        );
+
+        return response()->json([
+            'success' => true,
+            'message' => 'Mock interview completed successfully.',
+            'completed' => true,
+            'data' => $interview->fresh(),
+            'average_score' => $averageScore,
+            'total_questions' => 5,
+        ]);
+    }
+
+    /*
+    |--------------------------------------------------------------------------
+    | Previous questions nikalo taaki duplicate question na aaye
+    |--------------------------------------------------------------------------
+    */
+
+    $previousQuestions = MockInterview::where(
+        'user_id',
+        auth()->id()
+    )
+        ->where(
+            'interview_session_id',
+            $interview->interview_session_id
+        )
+        ->orderBy('question_no')
+        ->pluck('question')
+        ->filter()
+        ->values()
+        ->toArray();
+
+    $previousQuestionsText = collect($previousQuestions)
+        ->map(
+            fn ($question, $index) =>
+                ($index + 1) . '. ' . $question
+        )
+        ->implode("\n");
+
+    $nextQuestionNo = (int) $interview->question_no + 1;
+
+    /*
+    |--------------------------------------------------------------------------
+    | Next question generate karo
+    |--------------------------------------------------------------------------
+    */
+
+    $nextQuestionPrompt = "
+    You are an expert technical interviewer.
+
+    Generate exactly ONE next interview question.
+
+    Role: {$interview->role}
+    Experience level: {$interview->experience}
+    Current question number: {$nextQuestionNo} of 10
+
+    Questions already asked:
+    {$previousQuestionsText}
+
+    Important rules:
+    - Do not repeat any previous question.
+    - Keep the question suitable for the selected role.
+    - Keep the difficulty suitable for the experience level.
+    - Return only the question.
+    - Do not include numbering.
+    - Do not include explanation.
+    ";
+
+    $nextQuestionResponse = Http::withHeaders([
+        'Authorization' => 'Bearer ' . env('GROQ_API_KEY'),
+        'Content-Type' => 'application/json',
+    ])->post(
+        'https://api.groq.com/openai/v1/chat/completions',
+        [
+            'model' => 'llama-3.1-8b-instant',
+            'messages' => [
+                [
+                    'role' => 'user',
+                    'content' => $nextQuestionPrompt,
+                ],
+            ],
+            'temperature' => 0.7,
+        ]
+    );
+
+    if (!$nextQuestionResponse->successful()) {
+        return response()->json([
+            'success' => false,
+            'message' => 'Next interview question generate nahi ho saka.',
+            'error' => $nextQuestionResponse->json(),
+        ], 500);
+    }
+
+    $nextQuestion = trim(
+        (string) $nextQuestionResponse->json(
+            'choices.0.message.content'
+        )
+    );
+
+    if (empty($nextQuestion)) {
+        return response()->json([
+            'success' => false,
+            'message' => 'AI ne next question return nahi kiya.',
+        ], 500);
+    }
+
+    $nextInterview = MockInterview::create([
+        'user_id' => auth()->id(),
+        'interview_session_id' =>
+            $interview->interview_session_id,
+        'role' => $interview->role,
+        'experience' => $interview->experience,
+        'question_no' => $nextQuestionNo,
+        'question' => $nextQuestion,
+        'is_completed' => false,
     ]);
 
     return response()->json([
         'success' => true,
         'message' => 'Answer evaluated successfully.',
-        'data' => $interview->fresh(),
+        'completed' => false,
+        'previous_result' => $evaluatedInterview,
+        'next_question' => $nextInterview,
+        'current_question' => $nextQuestionNo,
+        'total_questions' => 5,
     ]);
 }
 

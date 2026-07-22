@@ -15,64 +15,93 @@ class AiCareerCoachController extends Controller
             'message' => 'required|string|max:2000',
         ]);
 
+        $user = $request->user();
+
+        if (!$user) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Unauthenticated.',
+            ], 401);
+        }
+
         $apiKey = env('GROQ_API_KEY');
 
         if (!$apiKey) {
             return response()->json([
                 'success' => false,
-                'reply' => 'Groq API key Backend .env me missing hai.',
+                'reply' => 'Groq API key backend .env file me missing hai.',
             ], 500);
         }
 
-        $systemPrompt = "You are StudentAI Career Coach. Reply in simple Hinglish. Help students with resume, jobs, interview, roadmap, and skills.";
+        $systemPrompt = 'You are StudentAI Career Coach. Reply in simple Hinglish. Help students with resume, jobs, interview, roadmap, and skills.';
 
-        $response = Http::timeout(30)
-            ->withHeaders([
-                'Authorization' => 'Bearer ' . $apiKey,
-                'Content-Type' => 'application/json',
-            ])
-            ->post('https://api.groq.com/openai/v1/chat/completions', [
+        try {
+            $response = Http::timeout(30)
+                ->withToken($apiKey)
+                ->acceptJson()
+                ->post('https://api.groq.com/openai/v1/chat/completions', [
+                    'model' => 'llama-3.1-8b-instant',
+                    'messages' => [
+                        [
+                            'role' => 'system',
+                            'content' => $systemPrompt,
+                        ],
+                        [
+                            'role' => 'user',
+                            'content' => trim($request->message),
+                        ],
+                    ],
+                    'temperature' => 0.7,
+                    'max_tokens' => 800,
+                ]);
+
+            if (!$response->successful()) {
+                return response()->json([
+                    'success' => false,
+                    'reply' => 'Groq API error: ' . $response->body(),
+                ], $response->status());
+            }
+
+            $reply = $response->json('choices.0.message.content');
+
+            if (!$reply) {
+                $reply = 'AI response empty hai.';
+            }
+
+            $chat = AiChat::create([
+                'user_id' => $user->id,
+                'question' => trim($request->message),
+                'answer' => trim($reply),
                 'model' => 'llama-3.1-8b-instant',
-                'messages' => [
-                    [
-                        'role' => 'system',
-                        'content' => $systemPrompt,
-                    ],
-                    [
-                        'role' => 'user',
-                        'content' => $request->message,
-                    ],
-                ],
-                'temperature' => 0.7,
-                'max_tokens' => 800,
+                'liked' => false,
+                'disliked' => false,
             ]);
 
-        if (!$response->successful()) {
+            return response()->json([
+                'success' => true,
+                'reply' => $reply,
+                'chat' => $chat,
+            ]);
+        } catch (\Throwable $error) {
             return response()->json([
                 'success' => false,
-                'reply' => 'Groq API error: ' . $response->body(),
+                'reply' => 'Server error: ' . $error->getMessage(),
             ], 500);
         }
-
-        $reply = $response->json('choices.0.message.content') ?? 'AI response empty hai.';
-
-        AiChat::create([
-            'user_id' => $request->user()->id,
-            'question' => $request->message,
-            'answer' => $reply,
-            'model' => 'groq-llama',
-        ]);
-
-        return response()->json([
-            'success' => true,
-            'reply' => $reply,
-           
-        ]);
     }
 
     public function history(Request $request)
     {
-        $chats = AiChat::where('user_id', $request->user()->id)
+        $user = $request->user();
+
+        if (!$user) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Unauthenticated.',
+            ], 401);
+        }
+
+        $chats = AiChat::where('user_id', $user->id)
             ->latest()
             ->get();
 
@@ -84,7 +113,16 @@ class AiCareerCoachController extends Controller
 
     public function deleteChat(Request $request, $id)
     {
-        $chat = AiChat::where('user_id', $request->user()->id)
+        $user = $request->user();
+
+        if (!$user) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Unauthenticated.',
+            ], 401);
+        }
+
+        $chat = AiChat::where('user_id', $user->id)
             ->where('id', $id)
             ->firstOrFail();
 
@@ -92,7 +130,27 @@ class AiCareerCoachController extends Controller
 
         return response()->json([
             'success' => true,
-            'message' => 'Chat deleted successfully',
+            'message' => 'Chat deleted successfully.',
+        ]);
+    }
+
+    public function clearAll(Request $request)
+    {
+        $user = $request->user();
+
+        if (!$user) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Unauthenticated.',
+            ], 401);
+        }
+
+        $deletedCount = AiChat::where('user_id', $user->id)->delete();
+
+        return response()->json([
+            'success' => true,
+            'message' => 'All chat history cleared successfully.',
+            'deleted_count' => $deletedCount,
         ]);
     }
 
@@ -102,7 +160,16 @@ class AiCareerCoachController extends Controller
             'type' => 'required|in:like,dislike',
         ]);
 
-        $chat = AiChat::where('user_id', $request->user()->id)
+        $user = $request->user();
+
+        if (!$user) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Unauthenticated.',
+            ], 401);
+        }
+
+        $chat = AiChat::where('user_id', $user->id)
             ->where('id', $id)
             ->firstOrFail();
 
@@ -113,7 +180,8 @@ class AiCareerCoachController extends Controller
 
         return response()->json([
             'success' => true,
-            'message' => 'Feedback saved',
+            'message' => 'Feedback saved.',
+            'chat' => $chat,
         ]);
     }
 }

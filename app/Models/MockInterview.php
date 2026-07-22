@@ -11,6 +11,7 @@ class MockInterview extends Model
 
     protected $fillable = [
         'user_id',
+        'interview_session_id',
         'role',
         'experience',
         'question_no',
@@ -18,6 +19,13 @@ class MockInterview extends Model
         'answer',
         'feedback',
         'score',
+        'is_completed',
+    ];
+
+    protected $casts = [
+        'question_no' => 'integer',
+        'score' => 'integer',
+        'is_completed' => 'boolean',
     ];
 
     public function user()
