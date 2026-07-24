@@ -39,13 +39,37 @@ class ForgotPasswordController extends Controller
 
         try {
             Mail::raw(
-                "Hello,\n\nYour StudentAI password reset OTP is: {$otp}\n\nThis OTP is valid for 10 minutes.\n\nDo not share this OTP with anyone.",
-                function ($message) use ($email) {
-                    $message->to($email)
-                        ->subject('StudentAI Password Reset OTP');
-                }
-            );
+                    "🎓 Welcome to StudentAI
 
+                    Hello,
+
+                    We received a request to reset the password for your StudentAI account.
+
+                    ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+                    🔐 Your One-Time Password (OTP)
+
+                    {$otp}
+
+                    ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+                    ⏳ This OTP is valid for only 10 minutes.
+
+                    ⚠️ Security Tips:
+                    • Never share this OTP with anyone.
+                    • StudentAI team will never ask for your OTP.
+                    • If you didn't request a password reset, please ignore this email.
+
+                    Thank you for using StudentAI!
+
+                    🚀 StudentAI
+                    Your Smart Learning & Career Companion
+
+                    © " . date('Y') . " StudentAI. All rights reserved.",
+                    function ($message) use ($email) {
+                        $message->to($email)
+                                ->subject('🔐 StudentAI Password Reset OTP');
+                    }
+                    );
             return response()->json([
                 'success' => true,
                 'message' => 'OTP aapke email par send kar diya gaya hai.',

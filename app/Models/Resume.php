@@ -21,5 +21,19 @@ class Resume extends Model
         'projects',
         'experience',
         'ats_score',
+        'strengths',
+        'weaknesses',
+        'suggestions',
     ];
+
+    protected $casts = [
+     'ats_score' => 'integer',
+     
+    'strengths' => 'array',
+
+    'weaknesses' => 'array',
+
+    'suggestions' => 'array',
+
+];
 }

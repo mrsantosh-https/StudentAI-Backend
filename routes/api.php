@@ -2,7 +2,7 @@
 
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Route;
-
+use App\Http\Controllers\Api\ResumeAIController;
 use App\Http\Controllers\Api\AuthController;
 use App\Http\Controllers\Api\ResumeController;
 use App\Http\Controllers\Api\NotificationController;
@@ -81,6 +81,7 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::get('/resumes/{id}', [ResumeController::class, 'show']);
     Route::put('/resumes/{id}', [ResumeController::class, 'update']);
     Route::delete('/resumes/{id}', [ResumeController::class, 'destroy']);
+     Route::post('/ai/resume-summary',[ResumeAIController::class, 'resumeSummary']);
 
     Route::put('/resumes/{id}/ats-score', [
         ResumeController::class,
@@ -213,4 +214,15 @@ Route::middleware('auth:sanctum')->group(function () {
         MockInterviewController::class,
         'destroy'
     ]);
+
+   /*
+    |--------------------------------------------------------------------------
+    | ResumeAiController
+    |--------------------------------------------------------------------------
+    */
+    Route::post('/resumes/{id}/analyze', [
+        ResumeAIController::class, 'analyze']);
+
+   
+
 });
