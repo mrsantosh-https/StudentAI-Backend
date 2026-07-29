@@ -12,7 +12,7 @@ use Illuminate\Validation\ValidationException;
 class ResumeAIController extends Controller
 {
     /**
-     * Analyze a saved resume using Groq AI.
+     * Analyze saved resume with Groq AI.
      */
     public function analyze(Request $request, int $id)
     {
@@ -21,9 +21,7 @@ class ResumeAIController extends Controller
         $resume = Resume::where('user_id', $user->id)
             ->findOrFail($id);
 
-        $apiKey = config('services.groq.key');
-
-        if (!$apiKey) {
+        if (!config('services.groq.key')) {
             return response()->json([
                 'success' => false,
                 'message' => 'Groq API key is missing.',
@@ -61,7 +59,6 @@ Rules:
 - weaknesses must be a JSON array of concise strings.
 - suggestions must be a JSON array of actionable strings.
 - Do not include markdown.
-- Do not include triple backticks.
 - Do not include explanations outside the JSON object.
 
 Resume:
@@ -104,14 +101,9 @@ PROMPT;
             $analysis = $this->parseJsonResponse($reply);
 
             if (!$analysis) {
-                Log::warning('Invalid Groq JSON response', [
-                    'resume_id' => $resume->id,
-                    'raw_response' => $reply,
-                ]);
-
                 return response()->json([
                     'success' => false,
-                    'message' => 'AI returned an invalid analysis format. Please try again.',
+                    'message' => 'AI returned an invalid analysis format.',
                 ], 502);
             }
 
@@ -132,7 +124,7 @@ PROMPT;
         } catch (ValidationException $e) {
             return response()->json([
                 'success' => false,
-                'message' => 'AI analysis format was incomplete. Please try again.',
+                'message' => 'AI analysis format was incomplete.',
                 'errors' => $e->errors(),
             ], 502);
         } catch (\Throwable $e) {
@@ -150,7 +142,7 @@ PROMPT;
     }
 
     /**
-     * Generate an ATS-friendly professional summary.
+     * Generate ATS-friendly professional summary.
      */
     public function resumeSummary(Request $request)
     {
@@ -162,9 +154,7 @@ PROMPT;
             'experience' => ['nullable', 'string', 'max:10000'],
         ]);
 
-        $apiKey = config('services.groq.key');
-
-        if (!$apiKey) {
+        if (!config('services.groq.key')) {
             return response()->json([
                 'success' => false,
                 'message' => 'Groq API key is missing.',
@@ -178,7 +168,7 @@ PROMPT;
         $experience = $validated['experience'] ?? 'Not provided';
 
         $prompt = <<<PROMPT
-Write a professional ATS-friendly resume summary for the candidate below.
+Write a professional ATS-friendly resume summary.
 
 Candidate details:
 
@@ -191,10 +181,9 @@ Experience: {$experience}
 Requirements:
 - Write one professional paragraph.
 - Use approximately 60 to 100 words.
-- Mention the candidate's strongest technical skills.
+- Mention the strongest technical skills.
 - Mention relevant projects or experience when provided.
-- Use confident but truthful language.
-- Do not invent employers, achievements, certifications, or experience.
+- Do not invent employers, certifications, achievements, or experience.
 - Do not add headings.
 - Do not use bullet points.
 - Return only the final summary paragraph.
@@ -209,12 +198,6 @@ PROMPT;
             );
 
             if (!$response->successful()) {
-                Log::error('Groq resume summary failed', [
-                    'status' => $response->status(),
-                    'response' => $response->body(),
-                    'user_id' => $request->user()?->id,
-                ]);
-
                 return response()->json([
                     'success' => false,
                     'message' => $this->extractGroqError($response),
@@ -230,13 +213,10 @@ PROMPT;
                 ], 502);
             }
 
-            $summary = trim($summary);
-            $summary = preg_replace('/^["\']|["\']$/', '', $summary);
-
             return response()->json([
                 'success' => true,
                 'message' => 'Resume summary generated successfully.',
-                'summary' => $summary,
+                'summary' => trim($summary),
             ]);
         } catch (\Throwable $e) {
             Log::error('Resume summary exception', [
@@ -252,7 +232,157 @@ PROMPT;
     }
 
     /**
-     * Send a request to Groq.
+     * Improve saved resume using Groq AI.
+     *
+     * This method returns a preview only.
+     * It does not update the database automatically.
+     */
+    public function improveResume(Request $request, int $id)
+    {
+        $user = $request->user();
+
+        $resume = Resume::where('user_id', $user->id)
+            ->findOrFail($id);
+
+        if (!config('services.groq.key')) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Groq API key is missing.',
+            ], 500);
+        }
+
+        $resumeText = $this->buildResumeText($resume);
+
+        $prompt = <<<PROMPT
+You are an expert ATS resume writer.
+
+Improve the resume below to make it professional, clear, recruiter-friendly, and ATS-friendly.
+
+You must improve only these sections:
+- summary
+- skills
+- projects
+- experience
+
+Strict rules:
+- Do not invent fake companies.
+- Do not invent fake job experience.
+- Do not invent fake certifications.
+- Do not invent fake education.
+- Do not invent fake achievements.
+- Do not invent numbers, percentages, or metrics.
+- Keep the original meaning and facts.
+- Improve grammar, wording, structure, and clarity.
+- Use strong action verbs where appropriate.
+- Keep skills relevant and organized.
+- Keep projects factual.
+- If a section is empty, return an empty string for that section.
+
+Return ONLY one valid JSON object in this exact format:
+
+{
+  "summary": "Improved professional summary",
+  "skills": "Improved and organized skills",
+  "projects": "Improved project descriptions",
+  "experience": "Improved experience descriptions"
+}
+
+Do not include markdown.
+Do not include triple backticks.
+Do not include explanations outside JSON.
+
+Resume:
+
+{$resumeText}
+PROMPT;
+
+        try {
+            $response = $this->sendGroqRequest(
+                systemPrompt: 'You are a professional ATS resume writer. Return strictly valid JSON.',
+                userPrompt: $prompt,
+                temperature: 0.35,
+                maxTokens: 1800,
+                jsonMode: true
+            );
+
+            if (!$response->successful()) {
+                Log::error('Groq resume improvement failed', [
+                    'status' => $response->status(),
+                    'response' => $response->body(),
+                    'resume_id' => $resume->id,
+                    'user_id' => $user->id,
+                ]);
+
+                return response()->json([
+                    'success' => false,
+                    'message' => $this->extractGroqError($response),
+                ], $this->safeErrorStatus($response->status()));
+            }
+
+            $reply = $response->json('choices.0.message.content');
+
+            if (!is_string($reply) || trim($reply) === '') {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'AI returned an empty improved resume.',
+                ], 502);
+            }
+
+            $improvedResume = $this->parseJsonResponse($reply);
+
+            if (!$improvedResume) {
+                Log::warning('Invalid improved resume JSON', [
+                    'resume_id' => $resume->id,
+                    'raw_response' => $reply,
+                ]);
+
+                return response()->json([
+                    'success' => false,
+                    'message' => 'AI returned an invalid resume format. Please try again.',
+                ], 502);
+            }
+
+            $validatedImprovedResume = validator($improvedResume, [
+                'summary' => ['present', 'nullable', 'string', 'max:10000'],
+                'skills' => ['present', 'nullable', 'string', 'max:10000'],
+                'projects' => ['present', 'nullable', 'string', 'max:20000'],
+                'experience' => ['present', 'nullable', 'string', 'max:20000'],
+            ])->validate();
+
+            $validatedImprovedResume = [
+                'summary' => trim($validatedImprovedResume['summary'] ?? ''),
+                'skills' => trim($validatedImprovedResume['skills'] ?? ''),
+                'projects' => trim($validatedImprovedResume['projects'] ?? ''),
+                'experience' => trim($validatedImprovedResume['experience'] ?? ''),
+            ];
+
+            return response()->json([
+                'success' => true,
+                'message' => 'Resume improved successfully.',
+                'improved_resume' => $validatedImprovedResume,
+            ]);
+        } catch (ValidationException $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'AI improved resume format was incomplete.',
+                'errors' => $e->errors(),
+            ], 502);
+        } catch (\Throwable $e) {
+            Log::error('Resume improvement exception', [
+                'message' => $e->getMessage(),
+                'resume_id' => $resume->id,
+                'user_id' => $user->id,
+            ]);
+
+            return response()->json([
+                'success' => false,
+                'message' => 'Resume improvement failed. Please try again.',
+            ], 500);
+        }
+    }
+
+    /**
+     * Send request to Groq API.
      */
     private function sendGroqRequest(
         string $systemPrompt,
@@ -266,6 +396,7 @@ PROMPT;
                 'services.groq.model',
                 'llama-3.1-8b-instant'
             ),
+
             'messages' => [
                 [
                     'role' => 'system',
@@ -276,6 +407,7 @@ PROMPT;
                     'content' => $userPrompt,
                 ],
             ],
+
             'temperature' => $temperature,
             'max_tokens' => $maxTokens,
         ];
@@ -299,7 +431,7 @@ PROMPT;
     }
 
     /**
-     * Build plain text from the resume fields.
+     * Build resume plain text.
      */
     private function buildResumeText(Resume $resume): string
     {
@@ -329,7 +461,7 @@ TEXT;
     }
 
     /**
-     * Decode AI JSON and handle accidental markdown fences.
+     * Parse JSON and remove accidental markdown fences.
      */
     private function parseJsonResponse(string $reply): ?array
     {
@@ -343,14 +475,21 @@ TEXT;
 
         $decoded = json_decode($cleanedReply, true);
 
-        if (json_last_error() === JSON_ERROR_NONE && is_array($decoded)) {
+        if (
+            json_last_error() === JSON_ERROR_NONE &&
+            is_array($decoded)
+        ) {
             return $decoded;
         }
 
         $start = strpos($cleanedReply, '{');
         $end = strrpos($cleanedReply, '}');
 
-        if ($start === false || $end === false || $end < $start) {
+        if (
+            $start === false ||
+            $end === false ||
+            $end < $start
+        ) {
             return null;
         }
 
@@ -362,34 +501,72 @@ TEXT;
 
         $decoded = json_decode($jsonOnly, true);
 
-        return json_last_error() === JSON_ERROR_NONE && is_array($decoded)
+        return json_last_error() === JSON_ERROR_NONE &&
+            is_array($decoded)
             ? $decoded
             : null;
     }
 
     /**
-     * Validate and normalize AI analysis data.
+     * Validate ATS analysis.
      */
     private function validateAnalysis(array $analysis): array
     {
         $validated = validator($analysis, [
-            'ats_score' => ['required', 'integer', 'between:0,100'],
-            'strengths' => ['required', 'array', 'min:1'],
-            'strengths.*' => ['required', 'string', 'max:500'],
-            'weaknesses' => ['required', 'array', 'min:1'],
-            'weaknesses.*' => ['required', 'string', 'max:500'],
-            'suggestions' => ['required', 'array', 'min:1'],
-            'suggestions.*' => ['required', 'string', 'max:500'],
+            'ats_score' => [
+                'required',
+                'integer',
+                'between:0,100',
+            ],
+
+            'strengths' => [
+                'required',
+                'array',
+                'min:1',
+            ],
+
+            'strengths.*' => [
+                'required',
+                'string',
+                'max:500',
+            ],
+
+            'weaknesses' => [
+                'required',
+                'array',
+                'min:1',
+            ],
+
+            'weaknesses.*' => [
+                'required',
+                'string',
+                'max:500',
+            ],
+
+            'suggestions' => [
+                'required',
+                'array',
+                'min:1',
+            ],
+
+            'suggestions.*' => [
+                'required',
+                'string',
+                'max:500',
+            ],
         ])->validate();
 
         return [
             'ats_score' => (int) $validated['ats_score'],
+
             'strengths' => array_values(
                 array_map('trim', $validated['strengths'])
             ),
+
             'weaknesses' => array_values(
                 array_map('trim', $validated['weaknesses'])
             ),
+
             'suggestions' => array_values(
                 array_map('trim', $validated['suggestions'])
             ),
@@ -397,7 +574,7 @@ TEXT;
     }
 
     /**
-     * Return a readable Groq API error.
+     * Extract readable Groq error.
      */
     private function extractGroqError($response): string
     {
@@ -406,11 +583,25 @@ TEXT;
     }
 
     /**
-     * Prevent unexpected third-party status codes.
+     * Return safe HTTP error status.
      */
     private function safeErrorStatus(int $status): int
     {
-        return in_array($status, [400, 401, 403, 404, 422, 429, 500, 502, 503], true)
+        return in_array(
+            $status,
+            [
+                400,
+                401,
+                403,
+                404,
+                422,
+                429,
+                500,
+                502,
+                503,
+            ],
+            true
+        )
             ? $status
             : 502;
     }

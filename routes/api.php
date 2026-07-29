@@ -8,11 +8,15 @@ use App\Http\Controllers\Api\ResumeController;
 use App\Http\Controllers\Api\NotificationController;
 use App\Http\Controllers\Api\ProfileController;
 use App\Http\Controllers\Api\DashboardController;
+use App\Http\Controllers\Api\CoverLetterController;
 use App\Http\Controllers\Api\AiCareerCoachController;
 use App\Http\Controllers\Api\JobApplicationController;
+use App\Http\Controllers\Api\JobMatcherController;
 use App\Http\Controllers\Api\InterviewHistoryController;
 use App\Http\Controllers\Api\ForgotPasswordController;
 use App\Http\Controllers\Api\MockInterviewController;
+use App\Http\Controllers\Api\CareerRoadmapController;
+use App\Http\Controllers\Api\ResumeReviewController;
 
 /*
 |--------------------------------------------------------------------------
@@ -81,7 +85,8 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::get('/resumes/{id}', [ResumeController::class, 'show']);
     Route::put('/resumes/{id}', [ResumeController::class, 'update']);
     Route::delete('/resumes/{id}', [ResumeController::class, 'destroy']);
-     Route::post('/ai/resume-summary',[ResumeAIController::class, 'resumeSummary']);
+    Route::post('/ai/resume-summary',[ResumeAIController::class, 'resumeSummary']);
+    Route::post('/resumes/{id}/improve',[ResumeAIController::class, 'improveResume']);
 
     Route::put('/resumes/{id}/ats-score', [
         ResumeController::class,
@@ -97,6 +102,18 @@ Route::middleware('auth:sanctum')->group(function () {
         DashboardController::class,
         'stats'
     ]);
+
+    Route::post('/ai/cover-letter', [
+    CoverLetterController::class,
+    'generate'
+]);
+
+Route::post('/ai/career-roadmap', [CareerRoadmapController::class, 'generate']);
+
+Route::middleware('auth:sanctum')->post(
+    '/resumes/{id}/review',
+    [ResumeReviewController::class, 'review']
+);
 
     /*
     |--------------------------------------------------------------------------
@@ -223,6 +240,6 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::post('/resumes/{id}/analyze', [
         ResumeAIController::class, 'analyze']);
 
-   
+     Route::post('/ai/job-match', [JobMatcherController::class, 'match']);
 
 });
