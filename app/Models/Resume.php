@@ -3,9 +3,10 @@
 namespace App\Models;
 
 use Illuminate\Database\Eloquent\Model;
-
+use Illuminate\Database\Eloquent\Factories\HasFactory;
 class Resume extends Model
-{
+{   
+    use HasFactory;
     protected $fillable = [
         'user_id',
         'title',
@@ -24,6 +25,13 @@ class Resume extends Model
         'strengths',
         'weaknesses',
         'suggestions',
+        'designation',
+        'address',
+        'city',
+        'state',
+        'country',
+        'pincode',
+        'career_objective',
     ];
 
     protected $casts = [
@@ -36,4 +44,9 @@ class Resume extends Model
     'suggestions' => 'array',
 
 ];
+
+  public function user()
+    {
+        return $this->belongsTo(User::class);
+    }
 }

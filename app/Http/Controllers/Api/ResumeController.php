@@ -2,132 +2,162 @@
 
 namespace App\Http\Controllers\Api;
 
-use App\Http\Controllers\Controller;
 use App\Models\Resume;
 use Illuminate\Http\Request;
+use App\Http\Controllers\Controller;
+use Illuminate\Support\Facades\Log;
+use Illuminate\Validation\ValidationException;
 
 class ResumeController extends Controller
 {
-    public function store(Request $request)
+    public function index(Request $request)
     {
-        $resume = Resume::create([
-            'user_id' => $request->user()->id,
-            'title' => $request->title ?? 'Untitled Resume',
-            'full_name' => $request->fullName,
-            'email' => $request->email,
-            'phone' => $request->phone,
-            'linkedin' => $request->linkedin,
-            'github' => $request->github,
-            'portfolio' => $request->portfolio,
-            'summary' => $request->summary,
-            'education' => $request->education,
-            'skills' => $request->skills,
-            'projects' => $request->projects,
-            'experience' => $request->experience,
-        ]);
+        $resumes = Resume::where('user_id', $request->user()->id)
+            ->latest()
+            ->get();
 
         return response()->json([
-            'message' => 'Resume saved successfully',
-            'resume' => $resume
-        ], 201);
+            'success' => true,
+            'resumes' => $resumes,
+        ]);
     }
-    public function index(Request $request)
-{
-    return $request->user()
-        ->resumes()
-        ->latest()
-        ->get();
-}
-public function destroy(Request $request, $id)
-{
-    $resume = Resume::where('user_id', $request->user()->id)
-        ->findOrFail($id);
 
-    $resume->delete();
+    public function store(Request $request)
+    {
+        try {
+            $validated = $this->validateResume($request);
 
-    return response()->json([
-        'message' => 'Resume deleted successfully'
-    ]);
-}
-public function updateAtsScore(Request $request, $id)
-{
-    $request->validate([
-        'ats_score' => 'required|integer|min:0|max:100',
-    ]);
+            $resume = Resume::create([
+                'user_id' => $request->user()->id,
+                ...$this->prepareResumeData($validated),
+            ]);
 
-    $resume = Resume::where('user_id', $request->user()->id)
-        ->findOrFail($id);
+            return response()->json([
+                'success' => true,
+                'message' => 'Resume saved successfully.',
+                'resume' => $resume,
+            ], 201);
+        } catch (ValidationException $error) {
+            throw $error;
+        } catch (\Throwable $error) {
+            Log::error('Resume store error', [
+                'message' => $error->getMessage(),
+                'trace' => $error->getTraceAsString(),
+            ]);
 
-    $resume->update([
-        'ats_score' => $request->ats_score,
-    ]);
+            return response()->json([
+                'success' => false,
+                'message' => $error->getMessage(),
+            ], 500);
+        }
+    }
 
-    return response()->json([
-        'message' => 'ATS score saved successfully',
-        'resume' => $resume,
-    ]);
-}
-public function analytics(Request $request)
-{
-    $user = $request->user();
+    public function show(Request $request, Resume $resume)
+    {
+        $this->authorizeResume($request, $resume);
 
-    return response()->json([
-        'total_resumes' => $user->resumes()->count(),
-        'latest_resume' => $user->resumes()->latest()->first(),
-        'profile_completion' => $this->profileCompletion($user),
-        'total_jobs' => $user->jobApplications()->count(),
-        'interview_jobs' => $user->jobApplications()->where('status', 'Interview')->count(),
-        'offer_jobs' => $user->jobApplications()->where('status', 'Offer')->count(),
-        'average_ats_score' => round($user->resumes()->avg('ats_score') ?? 0),
-    ]);
-}
+        return response()->json([
+            'success' => true,
+            'resume' => $resume,
+        ]);
+    }
 
-private function profileCompletion($user)
-{
-    $fields = [
-        $user->name,
-        $user->email,
-        $user->phone,
-        $user->linkedin,
-        $user->github,
-        $user->bio,
-        $user->profile_photo,
-    ];
+    public function update(Request $request, Resume $resume)
+    {
+        try {
+            $this->authorizeResume($request, $resume);
 
-    $filled = collect($fields)->filter()->count();
+            $validated = $this->validateResume($request);
 
-    return round(($filled / count($fields)) * 100);
-}
-public function update(Request $request, $id)
-{
-    $resume = Resume::where('user_id', $request->user()->id)
-        ->findOrFail($id);
+            $resume->update($this->prepareResumeData($validated));
 
-    $resume->update([
-        'title' => $request->title,
-        'full_name' => $request->fullName,
-        'email' => $request->email,
-        'phone' => $request->phone,
-        'linkedin' => $request->linkedin,
-        'github' => $request->github,
-        'portfolio' => $request->portfolio,
-        'summary' => $request->summary,
-        'education' => $request->education,
-        'skills' => $request->skills,
-        'projects' => $request->projects,
-        'experience' => $request->experience,
-    ]);
+            return response()->json([
+                'success' => true,
+                'message' => 'Resume updated successfully.',
+                'resume' => $resume->fresh(),
+            ]);
+        } catch (ValidationException $error) {
+            throw $error;
+        } catch (\Throwable $error) {
+            Log::error('Resume update error', [
+                'message' => $error->getMessage(),
+            ]);
 
-    return response()->json([
-        'message' => 'Resume updated successfully',
-        'resume' => $resume
-    ]);
-}
-public function show(Request $request, $id)
-{
-    $resume = Resume::where('user_id', $request->user()->id)
-        ->findOrFail($id);
+            return response()->json([
+                'success' => false,
+                'message' => $error->getMessage(),
+            ], 500);
+        }
+    }
 
-    return response()->json($resume);
-}
+    public function destroy(Request $request, Resume $resume)
+    {
+        $this->authorizeResume($request, $resume);
+
+        $resume->delete();
+
+        return response()->json([
+            'success' => true,
+            'message' => 'Resume deleted successfully.',
+        ]);
+    }
+
+    private function validateResume(Request $request): array
+    {
+        return $request->validate([
+            'title' => ['nullable', 'string', 'max:255'],
+            'fullName' => ['required', 'string', 'max:255'],
+            'designation' => ['nullable', 'string', 'max:255'],
+            'email' => ['required', 'email', 'max:255'],
+            'phone' => ['nullable', 'string', 'max:30'],
+            'address' => ['nullable', 'string'],
+            'city' => ['nullable', 'string', 'max:100'],
+            'state' => ['nullable', 'string', 'max:100'],
+            'country' => ['nullable', 'string', 'max:100'],
+            'pincode' => ['nullable', 'string', 'max:20'],
+            'linkedin' => ['nullable', 'url', 'max:500'],
+            'github' => ['nullable', 'url', 'max:500'],
+            'portfolio' => ['nullable', 'url', 'max:500'],
+            'careerObjective' => ['nullable', 'string'],
+            'summary' => ['nullable', 'string'],
+            'education' => ['nullable', 'string'],
+            'skills' => ['nullable', 'string'],
+            'projects' => ['nullable', 'string'],
+            'experience' => ['nullable', 'string'],
+        ]);
+    }
+
+    private function prepareResumeData(array $validated): array
+    {
+        return [
+            'title' => $validated['title'] ?? 'My Resume',
+            'full_name' => $validated['fullName'],
+            'designation' => $validated['designation'] ?? null,
+            'email' => $validated['email'],
+            'phone' => $validated['phone'] ?? null,
+            'address' => $validated['address'] ?? null,
+            'city' => $validated['city'] ?? null,
+            'state' => $validated['state'] ?? null,
+            'country' => $validated['country'] ?? null,
+            'pincode' => $validated['pincode'] ?? null,
+            'linkedin' => $validated['linkedin'] ?? null,
+            'github' => $validated['github'] ?? null,
+            'portfolio' => $validated['portfolio'] ?? null,
+            'career_objective' => $validated['careerObjective'] ?? null,
+            'summary' => $validated['summary'] ?? null,
+            'education' => $validated['education'] ?? null,
+            'skills' => $validated['skills'] ?? null,
+            'projects' => $validated['projects'] ?? null,
+            'experience' => $validated['experience'] ?? null,
+        ];
+    }
+
+    private function authorizeResume(Request $request, Resume $resume): void
+    {
+        abort_if(
+            $resume->user_id !== $request->user()->id,
+            403,
+            'You are not allowed to access this resume.'
+        );
+    }
 }
