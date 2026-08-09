@@ -1,9 +1,11 @@
 <?php
 
 namespace App\Http\Controllers\Api;
-
+use Illuminate\Support\Facades\Log;
 use App\Http\Controllers\Controller;
+use Illuminate\Support\Facades\DB;
 use App\Models\User;
+use App\Models\DeletedAccount;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Hash;
 use App\Models\Notification;
@@ -112,5 +114,89 @@ public function uploadProfilePhoto(Request $request)
         'profile_photo' => asset('storage/' . $path),
         'user' => $user,
     ]);
+}
+
+public function deleteAccount(Request $request)
+{
+    $user = $request->user();
+
+    if (!$user) {
+        return response()->json([
+            'success' => false,
+            'message' => 'Unauthenticated.',
+        ], 401);
+    }
+
+    try {
+
+        DB::transaction(function () use ($user, $request) {
+
+            /*
+            |--------------------------------------------------------------------------
+            | Store deleted account information
+            |--------------------------------------------------------------------------
+            |
+            | IMPORTANT:
+            | Password, remember_token, API token etc. archive nahi karne.
+            |
+            */
+
+            DeletedAccount::create([
+                'original_user_id' => $user->id,
+                'name' => $user->name,
+                'email' => $user->email,
+
+                // Agar ye columns users table me hain tab use karo.
+                'phone' => $user->phone ?? null,
+                'profile_photo' => $user->profile_photo ?? null,
+
+                'deleted_by' => 'user',
+
+                'reason' => $request->input('reason'),
+
+                'metadata' => [
+                    'deleted_from' => 'StudentAI',
+                    'ip_address' => $request->ip(),
+                ],
+
+                'account_deleted_at' => now(),
+            ]);
+
+            /*
+            |--------------------------------------------------------------------------
+            | Delete Sanctum tokens
+            |--------------------------------------------------------------------------
+            */
+
+            if (method_exists($user, 'tokens')) {
+                $user->tokens()->delete();
+            }
+
+            /*
+            |--------------------------------------------------------------------------
+            | Permanently delete user
+            |--------------------------------------------------------------------------
+            */
+
+            $user->delete();
+        });
+
+        return response()->json([
+            'success' => true,
+            'message' => 'Account permanently deleted successfully.',
+        ], 200);
+
+    } catch (\Throwable $error) {
+
+        Log::error('Delete account error', [
+            'user_id' => $user->id ?? null,
+            'message' => $error->getMessage(),
+        ]);
+
+        return response()->json([
+            'success' => false,
+            'message' => 'Account could not be deleted.',
+        ], 500);
+    }
 }
 }

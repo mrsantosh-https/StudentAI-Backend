@@ -25,62 +25,91 @@ class ForgotPasswordController extends Controller
 
         $email = strtolower(trim($request->email));
 
-        // Purane OTP delete kar do
-        PasswordResetOtp::where('email', $email)->delete();
+        /*
+         * Purane OTP remove
+         */
+        PasswordResetOtp::where(
+            'email',
+            $email
+        )->delete();
 
+        /*
+         * Generate 6-digit OTP
+         */
         $otp = random_int(100000, 999999);
 
-        PasswordResetOtp::create([
+        /*
+         * Save OTP
+         */
+        $otpRecord = PasswordResetOtp::create([
             'email' => $email,
-            'otp' => Hash::make((string) $otp),
+
+            'otp' => Hash::make(
+                (string) $otp
+            ),
+
             'expires_at' => now()->addMinutes(10),
+
             'verified' => false,
         ]);
 
         try {
             Mail::raw(
-                    "🎓 Welcome to StudentAI
+                "🎓 Welcome to StudentAI
 
-                    Hello,
+Hello,
 
-                    We received a request to reset the password for your StudentAI account.
+We received a request to reset the password for your StudentAI account.
 
-                    ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-                    🔐 Your One-Time Password (OTP)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+🔐 Your One-Time Password (OTP)
 
-                    {$otp}
+{$otp}
 
-                    ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-                    ⏳ This OTP is valid for only 10 minutes.
+⏳ This OTP is valid for only 10 minutes.
 
-                    ⚠️ Security Tips:
-                    • Never share this OTP with anyone.
-                    • StudentAI team will never ask for your OTP.
-                    • If you didn't request a password reset, please ignore this email.
+⚠️ Security Tips:
+• Never share this OTP with anyone.
+• StudentAI team will never ask for your OTP.
+• If you didn't request a password reset, please ignore this email.
 
-                    Thank you for using StudentAI!
+Thank you for using StudentAI!
 
-                    🚀 StudentAI
-                    Your Smart Learning & Career Companion
+🚀 StudentAI
+Your Smart Learning & Career Companion
 
-                    © " . date('Y') . " StudentAI. All rights reserved.",
-                    function ($message) use ($email) {
-                        $message->to($email)
-                                ->subject('🔐 StudentAI Password Reset OTP');
-                    }
-                    );
+© " . date('Y') . " StudentAI. All rights reserved.",
+
+                function ($message) use ($email) {
+                    $message
+                        ->to($email)
+                        ->subject(
+                            '🔐 StudentAI Password Reset OTP'
+                        );
+                }
+            );
+
             return response()->json([
                 'success' => true,
-                'message' => 'OTP aapke email par send kar diya gaya hai.',
+                'message' =>
+                    'OTP aapke email par send kar diya gaya hai.',
             ]);
+
         } catch (\Throwable $error) {
-            PasswordResetOtp::where('email', $email)->delete();
+
+            /*
+             * Email send fail hua to OTP remove
+             */
+            $otpRecord->delete();
 
             return response()->json([
                 'success' => false,
-                'message' => 'OTP email send nahi ho saka.',
-                'error' => $error->getMessage(),
+                'message' =>
+                    'OTP email send nahi ho saka.',
+                'error' =>
+                    $error->getMessage(),
             ], 500);
         }
     }
@@ -91,123 +120,230 @@ class ForgotPasswordController extends Controller
     |--------------------------------------------------------------------------
     */
 
-   public function verifyOtp(Request $request)
-{
-    $request->validate([
-        'email' => 'required|email',
-        'otp' => 'required|digits:6',
-    ]);
-
-    $email = strtolower(trim($request->email));
-
-    $otpRecord = PasswordResetOtp::where('email', $email)
-        ->orderByDesc('id')
-        ->first();
-
-    if (!$otpRecord) {
-        return response()->json([
-            'success' => false,
-            'message' => 'OTP request nahi mila. Naya OTP mangayein.',
-        ], 404);
-    }
-
-    if (now()->greaterThan($otpRecord->expires_at)) {
-        $otpRecord->delete();
-
-        return response()->json([
-            'success' => false,
-            'message' => 'OTP expire ho gaya hai.',
-        ], 422);
-    }
-
-    if (!Hash::check((string) $request->otp, $otpRecord->otp)) {
-        return response()->json([
-            'success' => false,
-            'message' => 'Invalid OTP.',
-        ], 422);
-    }
-
-    $updated = PasswordResetOtp::where('id', $otpRecord->id)
-        ->update([
-            'verified' => 1,
+    public function verifyOtp(Request $request)
+    {
+        $request->validate([
+            'email' => 'required|email',
+            'otp' => 'required|digits:6',
         ]);
 
-    $otpRecord = PasswordResetOtp::find($otpRecord->id);
+        $email = strtolower(
+            trim($request->email)
+        );
 
-    return response()->json([
-        'success' => true,
-        'message' => 'OTP successfully verify ho gaya.',
-        'updated_rows' => $updated,
-        'verified' => (bool) $otpRecord->verified,
-    ]);
-}
+        $otpRecord = PasswordResetOtp::where(
+            'email',
+            $email
+        )
+            ->latest('id')
+            ->first();
+
+        /*
+         * OTP record missing
+         */
+        if (!$otpRecord) {
+            return response()->json([
+                'success' => false,
+                'message' =>
+                    'OTP request nahi mila. Naya OTP mangayein.',
+            ], 404);
+        }
+
+        /*
+         * OTP expiry check
+         */
+        if (
+            !$otpRecord->expires_at ||
+            $otpRecord->expires_at->isPast()
+        ) {
+            $otpRecord->delete();
+
+            return response()->json([
+                'success' => false,
+                'message' =>
+                    'OTP expire ho gaya hai. Naya OTP mangayein.',
+            ], 422);
+        }
+
+        /*
+         * OTP check
+         */
+        if (
+            !Hash::check(
+                (string) $request->otp,
+                $otpRecord->otp
+            )
+        ) {
+            return response()->json([
+                'success' => false,
+                'message' =>
+                    'Invalid OTP.',
+            ], 422);
+        }
+
+        /*
+         * OTP verified
+         *
+         * IMPORTANT:
+         * Ab password reset karne ke liye
+         * fresh 10 minutes milenge.
+         */
+        $otpRecord->verified = true;
+
+        $otpRecord->expires_at =
+            now()->addMinutes(10);
+
+        $otpRecord->save();
+
+        return response()->json([
+            'success' => true,
+            'message' =>
+                'OTP successfully verify ho gaya.',
+
+            'verified' => true,
+
+            // Debug ke liye फिलहाल rehne do
+            'reset_expires_at' =>
+                $otpRecord
+                    ->expires_at
+                    ->toDateTimeString(),
+        ]);
+    }
+
     /*
     |--------------------------------------------------------------------------
     | Reset Password
     |--------------------------------------------------------------------------
     */
 
-   public function resetPassword(Request $request)
-{
-    $request->validate([
-        'email' => 'required|email|exists:users,email',
-        'otp' => 'required|digits:6',
-        'password' => 'required|string|min:8|confirmed',
-    ]);
+    public function resetPassword(Request $request)
+    {
+        $request->validate([
+            'email' =>
+                'required|email|exists:users,email',
 
-    $email = strtolower(trim($request->email));
+            'otp' =>
+                'required|digits:6',
 
-    $otpRecord = PasswordResetOtp::where('email', $email)
-        ->orderByDesc('id')
-        ->first();
+            'password' =>
+                'required|string|min:8|confirmed',
+        ]);
 
-    if (!$otpRecord) {
+        $email = strtolower(
+            trim($request->email)
+        );
+
+        $otpRecord = PasswordResetOtp::where(
+            'email',
+            $email
+        )
+            ->latest('id')
+            ->first();
+
+        /*
+         * OTP record missing
+         */
+        if (!$otpRecord) {
+            return response()->json([
+                'success' => false,
+                'message' =>
+                    'OTP record nahi mila. Naya OTP mangayein.',
+            ], 404);
+        }
+
+        /*
+         * IMPORTANT:
+         * OTP pehle verify hona chahiye.
+         */
+        if (!$otpRecord->verified) {
+            return response()->json([
+                'success' => false,
+                'message' =>
+                    'Pehle OTP verify karein.',
+            ], 422);
+        }
+
+        /*
+         * OTP verify hone ke baad
+         * fresh 10 minute reset session.
+         */
+        if (
+            !$otpRecord->expires_at ||
+            $otpRecord->expires_at->isPast()
+        ) {
+            $otpRecord->delete();
+
+            return response()->json([
+                'success' => false,
+                'message' =>
+                    'Password reset session expire ho gaya hai. Naya OTP mangayein.',
+            ], 422);
+        }
+
+        /*
+         * Security ke liye OTP dobara match
+         */
+        if (
+            !Hash::check(
+                (string) $request->otp,
+                $otpRecord->otp
+            )
+        ) {
+            return response()->json([
+                'success' => false,
+                'message' =>
+                    'Invalid OTP.',
+            ], 422);
+        }
+
+        /*
+         * Find user
+         */
+        $user = User::where(
+            'email',
+            $email
+        )->first();
+
+        if (!$user) {
+            return response()->json([
+                'success' => false,
+                'message' =>
+                    'User nahi mila.',
+            ], 404);
+        }
+
+        /*
+         * Update password
+         */
+        $user->password = Hash::make(
+            $request->password
+        );
+
+        $user->save();
+
+        /*
+         * Existing login sessions remove
+         */
+        if (method_exists($user, 'tokens')) {
+            $user->tokens()->delete();
+        }
+
+        /*
+         * OTP single-use hai.
+         * Reset complete hone ke baad delete.
+         */
+        PasswordResetOtp::where(
+            'email',
+            $email
+        )->delete();
+
         return response()->json([
-            'success' => false,
-            'message' => 'OTP record nahi mila. Naya OTP mangayein.',
-        ], 404);
+            'success' => true,
+            'message' =>
+                'Password successfully reset ho gaya.',
+        ]);
     }
 
-    if (now()->greaterThan($otpRecord->expires_at)) {
-        $otpRecord->delete();
-
-        return response()->json([
-            'success' => false,
-            'message' => 'OTP expire ho gaya hai. Naya OTP mangayein.',
-        ], 422);
-    }
-
-    // OTP ko reset ke samay dobara verify karo
-    if (!Hash::check((string) $request->otp, $otpRecord->otp)) {
-        return response()->json([
-            'success' => false,
-            'message' => 'Invalid OTP.',
-        ], 422);
-    }
-
-    $user = User::where('email', $email)->first();
-
-    if (!$user) {
-        return response()->json([
-            'success' => false,
-            'message' => 'User nahi mila.',
-        ], 404);
-    }
-
-    $user->password = Hash::make($request->password);
-    $user->save();
-
-    // Sabhi existing login tokens remove honge
-    $user->tokens()->delete();
-
-    // Password reset ke baad OTP delete
-    PasswordResetOtp::where('email', $email)->delete();
-
-    return response()->json([
-        'success' => true,
-        'message' => 'Password successfully reset ho gaya.',
-    ]);
-}
     /*
     |--------------------------------------------------------------------------
     | Resend OTP
