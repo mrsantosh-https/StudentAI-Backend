@@ -1,8 +1,8 @@
 <?php
 
 use Illuminate\Http\Request;
+use App\Models\ResumeVersion;
 use Illuminate\Support\Facades\Route;
-
 use App\Http\Controllers\Api\AuthController;
 use App\Http\Controllers\Api\ForgotPasswordController;
 use App\Http\Controllers\Api\ProfileController;
@@ -159,7 +159,20 @@ Route::middleware('auth:sanctum')->group(function () {
         [ResumeReviewController::class, 'review']
     );
 
+    Route::get(
+    '/resumes/{resume}/versions',
+    [ResumeController::class, 'versions']
+    );
 
+    Route::post(
+        '/resumes/{resume}/versions/{version}/restore',
+        [ResumeController::class, 'restoreVersion']
+    );
+
+    Route::delete(
+        '/resumes/{resume}/versions/{version}',
+        [ResumeController::class, 'deleteVersion']
+    );
     /*
     |--------------------------------------------------------------------------
     | Dashboard

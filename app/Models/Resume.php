@@ -31,6 +31,7 @@ class Resume extends Model
         'state',
         'country',
         'pincode',
+        'template',
         'career_objective',
     ];
 
@@ -48,5 +49,10 @@ class Resume extends Model
   public function user()
     {
         return $this->belongsTo(User::class);
+    }
+
+    public function versions()
+    {
+        return $this->hasMany(ResumeVersion::class);
     }
 }
