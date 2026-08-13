@@ -4,6 +4,7 @@ namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
 use App\Models\Resume;
+use App\Models\AIUsage;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
@@ -11,9 +12,12 @@ use Illuminate\Validation\ValidationException;
 
 class ResumeAIController extends Controller
 {
-    /**
-     * Analyze saved resume with Groq AI.
-     */
+    /*
+    |--------------------------------------------------------------------------
+    | Resume Analysis
+    |--------------------------------------------------------------------------
+    */
+
     public function analyze(Request $request, int $id)
     {
         $user = $request->user();
@@ -68,104 +72,310 @@ PROMPT;
 
         try {
             $response = $this->sendGroqRequest(
-                systemPrompt: 'You are an ATS resume expert. Return strictly valid JSON.',
+                systemPrompt:
+                    'You are an ATS resume expert. Return strictly valid JSON.',
                 userPrompt: $prompt,
                 temperature: 0.2,
                 maxTokens: 1200,
                 jsonMode: true
             );
 
+            /*
+            |--------------------------------------------------------------------------
+            | Token Usage
+            |--------------------------------------------------------------------------
+            */
+
+            $promptTokens = (int) (
+                $response->json('usage.prompt_tokens') ?? 0
+            );
+
+            $completionTokens = (int) (
+                $response->json('usage.completion_tokens') ?? 0
+            );
+
+            $totalTokens = (int) (
+                $response->json('usage.total_tokens')
+                ?? ($promptTokens + $completionTokens)
+            );
+
+            /*
+            |--------------------------------------------------------------------------
+            | Groq Failed
+            |--------------------------------------------------------------------------
+            */
+
             if (!$response->successful()) {
-                Log::error('Groq resume analysis failed', [
-                    'status' => $response->status(),
-                    'response' => $response->body(),
-                    'resume_id' => $resume->id,
-                    'user_id' => $user->id,
-                ]);
+                $errorMessage =
+                    $this->extractGroqError($response);
+
+                $this->saveUsage(
+                    userId: $user->id,
+                    tool: 'resume_analysis',
+                    status: 'failed',
+                    promptTokens: $promptTokens,
+                    completionTokens: $completionTokens,
+                    totalTokens: $totalTokens,
+                    errorMessage: $errorMessage
+                );
+
+                Log::error(
+                    'Groq resume analysis failed',
+                    [
+                        'status' => $response->status(),
+                        'response' => $response->body(),
+                        'resume_id' => $resume->id,
+                        'user_id' => $user->id,
+                    ]
+                );
 
                 return response()->json([
                     'success' => false,
-                    'message' => $this->extractGroqError($response),
-                ], $this->safeErrorStatus($response->status()));
+                    'message' => $errorMessage,
+                ], $this->safeErrorStatus(
+                    $response->status()
+                ));
             }
 
-            $reply = $response->json('choices.0.message.content');
+            /*
+            |--------------------------------------------------------------------------
+            | AI Response
+            |--------------------------------------------------------------------------
+            */
 
-            if (!is_string($reply) || trim($reply) === '') {
+            $reply = $response->json(
+                'choices.0.message.content'
+            );
+
+            if (
+                !is_string($reply) ||
+                trim($reply) === ''
+            ) {
+                $this->saveUsage(
+                    userId: $user->id,
+                    tool: 'resume_analysis',
+                    status: 'failed',
+                    promptTokens: $promptTokens,
+                    completionTokens: $completionTokens,
+                    totalTokens: $totalTokens,
+                    errorMessage:
+                        'AI returned an empty analysis.'
+                );
+
                 return response()->json([
                     'success' => false,
-                    'message' => 'AI returned an empty analysis.',
+                    'message' =>
+                        'AI returned an empty analysis.',
                 ], 502);
             }
 
-            $analysis = $this->parseJsonResponse($reply);
+            /*
+            |--------------------------------------------------------------------------
+            | Parse Analysis
+            |--------------------------------------------------------------------------
+            */
+
+            $analysis =
+                $this->parseJsonResponse(
+                    $reply
+                );
 
             if (!$analysis) {
+                $this->saveUsage(
+                    userId: $user->id,
+                    tool: 'resume_analysis',
+                    status: 'failed',
+                    promptTokens: $promptTokens,
+                    completionTokens: $completionTokens,
+                    totalTokens: $totalTokens,
+                    errorMessage:
+                        'AI returned an invalid analysis format.'
+                );
+
                 return response()->json([
                     'success' => false,
-                    'message' => 'AI returned an invalid analysis format.',
+                    'message' =>
+                        'AI returned an invalid analysis format.',
                 ], 502);
             }
 
-            $validatedAnalysis = $this->validateAnalysis($analysis);
+            /*
+            |--------------------------------------------------------------------------
+            | Validate Analysis
+            |--------------------------------------------------------------------------
+            */
+
+            $validatedAnalysis =
+                $this->validateAnalysis(
+                    $analysis
+                );
+
+            /*
+            |--------------------------------------------------------------------------
+            | Update Resume
+            |--------------------------------------------------------------------------
+            */
 
             $resume->update([
-                'ats_score' => $validatedAnalysis['ats_score'],
-                'strengths' => $validatedAnalysis['strengths'],
-                'weaknesses' => $validatedAnalysis['weaknesses'],
-                'suggestions' => $validatedAnalysis['suggestions'],
+                'ats_score' =>
+                    $validatedAnalysis['ats_score'],
+
+                'strengths' =>
+                    $validatedAnalysis['strengths'],
+
+                'weaknesses' =>
+                    $validatedAnalysis['weaknesses'],
+
+                'suggestions' =>
+                    $validatedAnalysis['suggestions'],
             ]);
+
+            /*
+            |--------------------------------------------------------------------------
+            | Success Usage
+            |--------------------------------------------------------------------------
+            */
+
+            $this->saveUsage(
+                userId: $user->id,
+                tool: 'resume_analysis',
+                status: 'success',
+                promptTokens: $promptTokens,
+                completionTokens: $completionTokens,
+                totalTokens: $totalTokens
+            );
 
             return response()->json([
                 'success' => true,
-                'message' => 'Resume analyzed successfully.',
-                'analysis' => $validatedAnalysis,
+
+                'message' =>
+                    'Resume analyzed successfully.',
+
+                'analysis' =>
+                    $validatedAnalysis,
             ]);
+
         } catch (ValidationException $e) {
-            return response()->json([
-                'success' => false,
-                'message' => 'AI analysis format was incomplete.',
-                'errors' => $e->errors(),
-            ], 502);
-        } catch (\Throwable $e) {
-            Log::error('Resume AI analysis exception', [
-                'message' => $e->getMessage(),
-                'resume_id' => $resume->id,
-                'user_id' => $user->id,
-            ]);
+
+            $this->saveUsage(
+                userId: $user->id,
+                tool: 'resume_analysis',
+                status: 'failed',
+                errorMessage:
+                    'AI analysis format was incomplete.'
+            );
 
             return response()->json([
                 'success' => false,
-                'message' => 'Resume analysis failed. Please try again.',
+
+                'message' =>
+                    'AI analysis format was incomplete.',
+
+                'errors' =>
+                    $e->errors(),
+            ], 502);
+
+        } catch (\Throwable $e) {
+
+            Log::error(
+                'Resume AI analysis exception',
+                [
+                    'message' =>
+                        $e->getMessage(),
+
+                    'resume_id' =>
+                        $resume->id,
+
+                    'user_id' =>
+                        $user->id,
+                ]
+            );
+
+            $this->saveUsage(
+                userId: $user->id,
+                tool: 'resume_analysis',
+                status: 'failed',
+                errorMessage:
+                    $e->getMessage()
+            );
+
+            return response()->json([
+                'success' => false,
+
+                'message' =>
+                    'Resume analysis failed. Please try again.',
             ], 500);
         }
     }
 
-    /**
-     * Generate ATS-friendly professional summary.
-     */
+
+    /*
+    |--------------------------------------------------------------------------
+    | Resume Builder AI Summary
+    |--------------------------------------------------------------------------
+    */
+
     public function resumeSummary(Request $request)
     {
         $validated = $request->validate([
-            'fullName' => ['required', 'string', 'max:255'],
-            'education' => ['nullable', 'string', 'max:5000'],
-            'skills' => ['required', 'string', 'max:5000'],
-            'projects' => ['nullable', 'string', 'max:10000'],
-            'experience' => ['nullable', 'string', 'max:10000'],
+            'fullName' => [
+                'required',
+                'string',
+                'max:255'
+            ],
+
+            'education' => [
+                'nullable',
+                'string',
+                'max:5000'
+            ],
+
+            'skills' => [
+                'required',
+                'string',
+                'max:5000'
+            ],
+
+            'projects' => [
+                'nullable',
+                'string',
+                'max:10000'
+            ],
+
+            'experience' => [
+                'nullable',
+                'string',
+                'max:10000'
+            ],
         ]);
 
         if (!config('services.groq.key')) {
             return response()->json([
                 'success' => false,
-                'message' => 'Groq API key is missing.',
+                'message' =>
+                    'Groq API key is missing.',
             ], 500);
         }
 
-        $fullName = $validated['fullName'];
-        $education = $validated['education'] ?? 'Not provided';
-        $skills = $validated['skills'];
-        $projects = $validated['projects'] ?? 'Not provided';
-        $experience = $validated['experience'] ?? 'Not provided';
+        $user = $request->user();
+
+        $fullName =
+            $validated['fullName'];
+
+        $education =
+            $validated['education']
+            ?? 'Not provided';
+
+        $skills =
+            $validated['skills'];
+
+        $projects =
+            $validated['projects']
+            ?? 'Not provided';
+
+        $experience =
+            $validated['experience']
+            ?? 'Not provided';
 
         $prompt = <<<PROMPT
 Write a professional ATS-friendly resume summary.
@@ -190,68 +400,251 @@ Requirements:
 PROMPT;
 
         try {
-            $response = $this->sendGroqRequest(
-                systemPrompt: 'You are a professional ATS resume writer.',
-                userPrompt: $prompt,
-                temperature: 0.5,
-                maxTokens: 350
+            $response =
+                $this->sendGroqRequest(
+                    systemPrompt:
+                        'You are a professional ATS resume writer.',
+
+                    userPrompt:
+                        $prompt,
+
+                    temperature:
+                        0.5,
+
+                    maxTokens:
+                        350
+                );
+
+            /*
+            |--------------------------------------------------------------------------
+            | Tokens
+            |--------------------------------------------------------------------------
+            */
+
+            $promptTokens = (int) (
+                $response->json(
+                    'usage.prompt_tokens'
+                ) ?? 0
             );
 
+            $completionTokens = (int) (
+                $response->json(
+                    'usage.completion_tokens'
+                ) ?? 0
+            );
+
+            $totalTokens = (int) (
+                $response->json(
+                    'usage.total_tokens'
+                )
+                ??
+                (
+                    $promptTokens
+                    +
+                    $completionTokens
+                )
+            );
+
+            /*
+            |--------------------------------------------------------------------------
+            | Failed
+            |--------------------------------------------------------------------------
+            */
+
             if (!$response->successful()) {
+                $errorMessage =
+                    $this->extractGroqError(
+                        $response
+                    );
+
+                $this->saveUsage(
+                    userId:
+                        $user?->id,
+
+                    tool:
+                        'resume_builder',
+
+                    status:
+                        'failed',
+
+                    promptTokens:
+                        $promptTokens,
+
+                    completionTokens:
+                        $completionTokens,
+
+                    totalTokens:
+                        $totalTokens,
+
+                    errorMessage:
+                        $errorMessage
+                );
+
                 return response()->json([
                     'success' => false,
-                    'message' => $this->extractGroqError($response),
-                ], $this->safeErrorStatus($response->status()));
+                    'message' =>
+                        $errorMessage,
+                ], $this->safeErrorStatus(
+                    $response->status()
+                ));
             }
 
-            $summary = $response->json('choices.0.message.content');
+            /*
+            |--------------------------------------------------------------------------
+            | Summary
+            |--------------------------------------------------------------------------
+            */
 
-            if (!is_string($summary) || trim($summary) === '') {
+            $summary =
+                $response->json(
+                    'choices.0.message.content'
+                );
+
+            if (
+                !is_string($summary) ||
+                trim($summary) === ''
+            ) {
+                $this->saveUsage(
+                    userId:
+                        $user?->id,
+
+                    tool:
+                        'resume_builder',
+
+                    status:
+                        'failed',
+
+                    promptTokens:
+                        $promptTokens,
+
+                    completionTokens:
+                        $completionTokens,
+
+                    totalTokens:
+                        $totalTokens,
+
+                    errorMessage:
+                        'AI returned an empty summary.'
+                );
+
                 return response()->json([
                     'success' => false,
-                    'message' => 'AI returned an empty summary.',
+
+                    'message' =>
+                        'AI returned an empty summary.',
                 ], 502);
             }
 
-            return response()->json([
-                'success' => true,
-                'message' => 'Resume summary generated successfully.',
-                'summary' => trim($summary),
-            ]);
-        } catch (\Throwable $e) {
-            Log::error('Resume summary exception', [
-                'message' => $e->getMessage(),
-                'user_id' => $request->user()?->id,
-            ]);
+            /*
+            |--------------------------------------------------------------------------
+            | Success Usage
+            |--------------------------------------------------------------------------
+            */
+
+            $this->saveUsage(
+                userId:
+                    $user?->id,
+
+                tool:
+                    'resume_builder',
+
+                status:
+                    'success',
+
+                promptTokens:
+                    $promptTokens,
+
+                completionTokens:
+                    $completionTokens,
+
+                totalTokens:
+                    $totalTokens
+            );
 
             return response()->json([
-                'success' => false,
-                'message' => 'Summary generation failed. Please try again.',
+                'success' =>
+                    true,
+
+                'message' =>
+                    'Resume summary generated successfully.',
+
+                'summary' =>
+                    trim($summary),
+            ]);
+
+        } catch (\Throwable $e) {
+
+            Log::error(
+                'Resume summary exception',
+                [
+                    'message' =>
+                        $e->getMessage(),
+
+                    'user_id' =>
+                        $user?->id,
+                ]
+            );
+
+            $this->saveUsage(
+                userId:
+                    $user?->id,
+
+                tool:
+                    'resume_builder',
+
+                status:
+                    'failed',
+
+                errorMessage:
+                    $e->getMessage()
+            );
+
+            return response()->json([
+                'success' =>
+                    false,
+
+                'message' =>
+                    'Summary generation failed. Please try again.',
             ], 500);
         }
     }
 
-    /**
-     * Improve saved resume using Groq AI.
-     *
-     * This method returns a preview only.
-     * It does not update the database automatically.
-     */
-    public function improveResume(Request $request, int $id)
-    {
-        $user = $request->user();
 
-        $resume = Resume::where('user_id', $user->id)
-            ->findOrFail($id);
+    /*
+    |--------------------------------------------------------------------------
+    | Improve Resume
+    |--------------------------------------------------------------------------
+    */
+
+    public function improveResume(
+        Request $request,
+        int $id
+    ) {
+        $user =
+            $request->user();
+
+        $resume =
+            Resume::where(
+                'user_id',
+                $user->id
+            )
+                ->findOrFail(
+                    $id
+                );
 
         if (!config('services.groq.key')) {
             return response()->json([
                 'success' => false,
-                'message' => 'Groq API key is missing.',
+
+                'message' =>
+                    'Groq API key is missing.',
             ], 500);
         }
 
-        $resumeText = $this->buildResumeText($resume);
+        $resumeText =
+            $this->buildResumeText(
+                $resume
+            );
 
         $prompt = <<<PROMPT
 You are an expert ATS resume writer.
@@ -297,93 +690,449 @@ Resume:
 PROMPT;
 
         try {
-            $response = $this->sendGroqRequest(
-                systemPrompt: 'You are a professional ATS resume writer. Return strictly valid JSON.',
-                userPrompt: $prompt,
-                temperature: 0.35,
-                maxTokens: 1800,
-                jsonMode: true
+            $response =
+                $this->sendGroqRequest(
+                    systemPrompt:
+                        'You are a professional ATS resume writer. Return strictly valid JSON.',
+
+                    userPrompt:
+                        $prompt,
+
+                    temperature:
+                        0.35,
+
+                    maxTokens:
+                        1800,
+
+                    jsonMode:
+                        true
+                );
+
+            /*
+            |--------------------------------------------------------------------------
+            | Token Usage
+            |--------------------------------------------------------------------------
+            */
+
+            $promptTokens = (int) (
+                $response->json(
+                    'usage.prompt_tokens'
+                ) ?? 0
             );
 
+            $completionTokens = (int) (
+                $response->json(
+                    'usage.completion_tokens'
+                ) ?? 0
+            );
+
+            $totalTokens = (int) (
+                $response->json(
+                    'usage.total_tokens'
+                )
+                ??
+                (
+                    $promptTokens
+                    +
+                    $completionTokens
+                )
+            );
+
+            /*
+            |--------------------------------------------------------------------------
+            | Groq Failed
+            |--------------------------------------------------------------------------
+            */
+
             if (!$response->successful()) {
-                Log::error('Groq resume improvement failed', [
-                    'status' => $response->status(),
-                    'response' => $response->body(),
-                    'resume_id' => $resume->id,
-                    'user_id' => $user->id,
-                ]);
+                $errorMessage =
+                    $this->extractGroqError(
+                        $response
+                    );
+
+                $this->saveUsage(
+                    userId:
+                        $user->id,
+
+                    tool:
+                        'resume_improvement',
+
+                    status:
+                        'failed',
+
+                    promptTokens:
+                        $promptTokens,
+
+                    completionTokens:
+                        $completionTokens,
+
+                    totalTokens:
+                        $totalTokens,
+
+                    errorMessage:
+                        $errorMessage
+                );
+
+                Log::error(
+                    'Groq resume improvement failed',
+                    [
+                        'status' =>
+                            $response->status(),
+
+                        'response' =>
+                            $response->body(),
+
+                        'resume_id' =>
+                            $resume->id,
+
+                        'user_id' =>
+                            $user->id,
+                    ]
+                );
 
                 return response()->json([
-                    'success' => false,
-                    'message' => $this->extractGroqError($response),
-                ], $this->safeErrorStatus($response->status()));
+                    'success' =>
+                        false,
+
+                    'message' =>
+                        $errorMessage,
+                ], $this->safeErrorStatus(
+                    $response->status()
+                ));
             }
 
-            $reply = $response->json('choices.0.message.content');
+            /*
+            |--------------------------------------------------------------------------
+            | AI Response
+            |--------------------------------------------------------------------------
+            */
 
-            if (!is_string($reply) || trim($reply) === '') {
+            $reply =
+                $response->json(
+                    'choices.0.message.content'
+                );
+
+            if (
+                !is_string($reply) ||
+                trim($reply) === ''
+            ) {
+                $this->saveUsage(
+                    userId:
+                        $user->id,
+
+                    tool:
+                        'resume_improvement',
+
+                    status:
+                        'failed',
+
+                    promptTokens:
+                        $promptTokens,
+
+                    completionTokens:
+                        $completionTokens,
+
+                    totalTokens:
+                        $totalTokens,
+
+                    errorMessage:
+                        'AI returned an empty improved resume.'
+                );
+
                 return response()->json([
-                    'success' => false,
-                    'message' => 'AI returned an empty improved resume.',
+                    'success' =>
+                        false,
+
+                    'message' =>
+                        'AI returned an empty improved resume.',
                 ], 502);
             }
 
-            $improvedResume = $this->parseJsonResponse($reply);
+            /*
+            |--------------------------------------------------------------------------
+            | Parse JSON
+            |--------------------------------------------------------------------------
+            */
+
+            $improvedResume =
+                $this->parseJsonResponse(
+                    $reply
+                );
 
             if (!$improvedResume) {
-                Log::warning('Invalid improved resume JSON', [
-                    'resume_id' => $resume->id,
-                    'raw_response' => $reply,
-                ]);
+                $this->saveUsage(
+                    userId:
+                        $user->id,
+
+                    tool:
+                        'resume_improvement',
+
+                    status:
+                        'failed',
+
+                    promptTokens:
+                        $promptTokens,
+
+                    completionTokens:
+                        $completionTokens,
+
+                    totalTokens:
+                        $totalTokens,
+
+                    errorMessage:
+                        'AI returned an invalid resume format.'
+                );
+
+                Log::warning(
+                    'Invalid improved resume JSON',
+                    [
+                        'resume_id' =>
+                            $resume->id,
+
+                        'raw_response' =>
+                            $reply,
+                    ]
+                );
 
                 return response()->json([
-                    'success' => false,
-                    'message' => 'AI returned an invalid resume format. Please try again.',
+                    'success' =>
+                        false,
+
+                    'message' =>
+                        'AI returned an invalid resume format. Please try again.',
                 ], 502);
             }
 
-            $validatedImprovedResume = validator($improvedResume, [
-                'summary' => ['present', 'nullable', 'string', 'max:10000'],
-                'skills' => ['present', 'nullable', 'string', 'max:10000'],
-                'projects' => ['present', 'nullable', 'string', 'max:20000'],
-                'experience' => ['present', 'nullable', 'string', 'max:20000'],
-            ])->validate();
+            /*
+            |--------------------------------------------------------------------------
+            | Validate Response
+            |--------------------------------------------------------------------------
+            */
+
+            $validatedImprovedResume =
+                validator(
+                    $improvedResume,
+                    [
+                        'summary' => [
+                            'present',
+                            'nullable',
+                            'string',
+                            'max:10000',
+                        ],
+
+                        'skills' => [
+                            'present',
+                            'nullable',
+                            'string',
+                            'max:10000',
+                        ],
+
+                        'projects' => [
+                            'present',
+                            'nullable',
+                            'string',
+                            'max:20000',
+                        ],
+
+                        'experience' => [
+                            'present',
+                            'nullable',
+                            'string',
+                            'max:20000',
+                        ],
+                    ]
+                )->validate();
 
             $validatedImprovedResume = [
-                'summary' => trim($validatedImprovedResume['summary'] ?? ''),
-                'skills' => trim($validatedImprovedResume['skills'] ?? ''),
-                'projects' => trim($validatedImprovedResume['projects'] ?? ''),
-                'experience' => trim($validatedImprovedResume['experience'] ?? ''),
+                'summary' => trim(
+                    $validatedImprovedResume['summary']
+                    ?? ''
+                ),
+
+                'skills' => trim(
+                    $validatedImprovedResume['skills']
+                    ?? ''
+                ),
+
+                'projects' => trim(
+                    $validatedImprovedResume['projects']
+                    ?? ''
+                ),
+
+                'experience' => trim(
+                    $validatedImprovedResume['experience']
+                    ?? ''
+                ),
             ];
 
-            return response()->json([
-                'success' => true,
-                'message' => 'Resume improved successfully.',
-                'improved_resume' => $validatedImprovedResume,
-            ]);
-        } catch (ValidationException $e) {
-            return response()->json([
-                'success' => false,
-                'message' => 'AI improved resume format was incomplete.',
-                'errors' => $e->errors(),
-            ], 502);
-        } catch (\Throwable $e) {
-            Log::error('Resume improvement exception', [
-                'message' => $e->getMessage(),
-                'resume_id' => $resume->id,
-                'user_id' => $user->id,
-            ]);
+            /*
+            |--------------------------------------------------------------------------
+            | Success Usage
+            |--------------------------------------------------------------------------
+            */
+
+            $this->saveUsage(
+                userId:
+                    $user->id,
+
+                tool:
+                    'resume_improvement',
+
+                status:
+                    'success',
+
+                promptTokens:
+                    $promptTokens,
+
+                completionTokens:
+                    $completionTokens,
+
+                totalTokens:
+                    $totalTokens
+            );
 
             return response()->json([
-                'success' => false,
-                'message' => 'Resume improvement failed. Please try again.',
+                'success' =>
+                    true,
+
+                'message' =>
+                    'Resume improved successfully.',
+
+                'improved_resume' =>
+                    $validatedImprovedResume,
+            ]);
+
+        } catch (ValidationException $e) {
+
+            $this->saveUsage(
+                userId:
+                    $user->id,
+
+                tool:
+                    'resume_improvement',
+
+                status:
+                    'failed',
+
+                errorMessage:
+                    'AI improved resume format was incomplete.'
+            );
+
+            return response()->json([
+                'success' =>
+                    false,
+
+                'message' =>
+                    'AI improved resume format was incomplete.',
+
+                'errors' =>
+                    $e->errors(),
+            ], 502);
+
+        } catch (\Throwable $e) {
+
+            Log::error(
+                'Resume improvement exception',
+                [
+                    'message' =>
+                        $e->getMessage(),
+
+                    'resume_id' =>
+                        $resume->id,
+
+                    'user_id' =>
+                        $user->id,
+                ]
+            );
+
+            $this->saveUsage(
+                userId:
+                    $user->id,
+
+                tool:
+                    'resume_improvement',
+
+                status:
+                    'failed',
+
+                errorMessage:
+                    $e->getMessage()
+            );
+
+            return response()->json([
+                'success' =>
+                    false,
+
+                'message' =>
+                    'Resume improvement failed. Please try again.',
             ], 500);
         }
     }
 
-    /**
-     * Send request to Groq API.
-     */
+
+    /*
+    |--------------------------------------------------------------------------
+    | Save AI Usage
+    |--------------------------------------------------------------------------
+    */
+
+    private function saveUsage(
+        ?int $userId,
+        string $tool,
+        string $status,
+        int $promptTokens = 0,
+        int $completionTokens = 0,
+        int $totalTokens = 0,
+        ?string $errorMessage = null
+    ): void {
+        try {
+            AIUsage::create([
+                'user_id' =>
+                    $userId,
+
+                'tool' =>
+                    $tool,
+
+                'status' =>
+                    $status,
+
+                'prompt_tokens' =>
+                    $promptTokens,
+
+                'completion_tokens' =>
+                    $completionTokens,
+
+                'total_tokens' =>
+                    $totalTokens,
+
+                'error_message' =>
+                    $errorMessage,
+            ]);
+
+        } catch (\Throwable $error) {
+            Log::error(
+                'Resume AI usage save failed',
+                [
+                    'message' =>
+                        $error->getMessage(),
+
+                    'user_id' =>
+                        $userId,
+
+                    'tool' =>
+                        $tool,
+                ]
+            );
+        }
+    }
+
+
+    /*
+    |--------------------------------------------------------------------------
+    | Send Request To Groq
+    |--------------------------------------------------------------------------
+    */
+
     private function sendGroqRequest(
         string $systemPrompt,
         string $userPrompt,
@@ -399,26 +1148,39 @@ PROMPT;
 
             'messages' => [
                 [
-                    'role' => 'system',
-                    'content' => $systemPrompt,
+                    'role' =>
+                        'system',
+
+                    'content' =>
+                        $systemPrompt,
                 ],
+
                 [
-                    'role' => 'user',
-                    'content' => $userPrompt,
+                    'role' =>
+                        'user',
+
+                    'content' =>
+                        $userPrompt,
                 ],
             ],
 
-            'temperature' => $temperature,
-            'max_tokens' => $maxTokens,
+            'temperature' =>
+                $temperature,
+
+            'max_tokens' =>
+                $maxTokens,
         ];
 
         if ($jsonMode) {
             $payload['response_format'] = [
-                'type' => 'json_object',
+                'type' =>
+                    'json_object',
             ];
         }
 
-        return Http::withToken(config('services.groq.key'))
+        return Http::withToken(
+            config('services.groq.key')
+        )
             ->acceptJson()
             ->asJson()
             ->connectTimeout(10)
@@ -430,11 +1192,16 @@ PROMPT;
             );
     }
 
-    /**
-     * Build resume plain text.
-     */
-    private function buildResumeText(Resume $resume): string
-    {
+
+    /*
+    |--------------------------------------------------------------------------
+    | Build Resume Text
+    |--------------------------------------------------------------------------
+    */
+
+    private function buildResumeText(
+        Resume $resume
+    ): string {
         return <<<TEXT
 Name: {$resume->full_name}
 Email: {$resume->email}
@@ -460,30 +1227,52 @@ Experience:
 TEXT;
     }
 
-    /**
-     * Parse JSON and remove accidental markdown fences.
-     */
-    private function parseJsonResponse(string $reply): ?array
-    {
-        $cleanedReply = trim($reply);
 
-        $cleanedReply = preg_replace(
-            '/^```(?:json)?\s*|\s*```$/i',
-            '',
-            $cleanedReply
-        );
+    /*
+    |--------------------------------------------------------------------------
+    | Parse JSON Response
+    |--------------------------------------------------------------------------
+    */
 
-        $decoded = json_decode($cleanedReply, true);
+    private function parseJsonResponse(
+        string $reply
+    ): ?array {
+        $cleanedReply =
+            trim($reply);
+
+        $cleanedReply =
+            preg_replace(
+                '/^```(?:json)?\s*|\s*```$/i',
+                '',
+                $cleanedReply
+            );
+
+        $decoded =
+            json_decode(
+                $cleanedReply,
+                true
+            );
 
         if (
-            json_last_error() === JSON_ERROR_NONE &&
+            json_last_error()
+                === JSON_ERROR_NONE
+            &&
             is_array($decoded)
         ) {
             return $decoded;
         }
 
-        $start = strpos($cleanedReply, '{');
-        $end = strrpos($cleanedReply, '}');
+        $start =
+            strpos(
+                $cleanedReply,
+                '{'
+            );
+
+        $end =
+            strrpos(
+                $cleanedReply,
+                '}'
+            );
 
         if (
             $start === false ||
@@ -493,100 +1282,145 @@ TEXT;
             return null;
         }
 
-        $jsonOnly = substr(
-            $cleanedReply,
-            $start,
-            $end - $start + 1
-        );
+        $jsonOnly =
+            substr(
+                $cleanedReply,
+                $start,
+                $end - $start + 1
+            );
 
-        $decoded = json_decode($jsonOnly, true);
+        $decoded =
+            json_decode(
+                $jsonOnly,
+                true
+            );
 
-        return json_last_error() === JSON_ERROR_NONE &&
+        return (
+            json_last_error()
+                === JSON_ERROR_NONE
+            &&
             is_array($decoded)
+        )
             ? $decoded
             : null;
     }
 
-    /**
-     * Validate ATS analysis.
-     */
-    private function validateAnalysis(array $analysis): array
-    {
-        $validated = validator($analysis, [
-            'ats_score' => [
-                'required',
-                'integer',
-                'between:0,100',
-            ],
 
-            'strengths' => [
-                'required',
-                'array',
-                'min:1',
-            ],
+    /*
+    |--------------------------------------------------------------------------
+    | Validate ATS Analysis
+    |--------------------------------------------------------------------------
+    */
 
-            'strengths.*' => [
-                'required',
-                'string',
-                'max:500',
-            ],
+    private function validateAnalysis(
+        array $analysis
+    ): array {
+        $validated =
+            validator(
+                $analysis,
+                [
+                    'ats_score' => [
+                        'required',
+                        'integer',
+                        'between:0,100',
+                    ],
 
-            'weaknesses' => [
-                'required',
-                'array',
-                'min:1',
-            ],
+                    'strengths' => [
+                        'required',
+                        'array',
+                        'min:1',
+                    ],
 
-            'weaknesses.*' => [
-                'required',
-                'string',
-                'max:500',
-            ],
+                    'strengths.*' => [
+                        'required',
+                        'string',
+                        'max:500',
+                    ],
 
-            'suggestions' => [
-                'required',
-                'array',
-                'min:1',
-            ],
+                    'weaknesses' => [
+                        'required',
+                        'array',
+                        'min:1',
+                    ],
 
-            'suggestions.*' => [
-                'required',
-                'string',
-                'max:500',
-            ],
-        ])->validate();
+                    'weaknesses.*' => [
+                        'required',
+                        'string',
+                        'max:500',
+                    ],
+
+                    'suggestions' => [
+                        'required',
+                        'array',
+                        'min:1',
+                    ],
+
+                    'suggestions.*' => [
+                        'required',
+                        'string',
+                        'max:500',
+                    ],
+                ]
+            )->validate();
 
         return [
-            'ats_score' => (int) $validated['ats_score'],
+            'ats_score' =>
+                (int)
+                $validated['ats_score'],
 
-            'strengths' => array_values(
-                array_map('trim', $validated['strengths'])
-            ),
+            'strengths' =>
+                array_values(
+                    array_map(
+                        'trim',
+                        $validated['strengths']
+                    )
+                ),
 
-            'weaknesses' => array_values(
-                array_map('trim', $validated['weaknesses'])
-            ),
+            'weaknesses' =>
+                array_values(
+                    array_map(
+                        'trim',
+                        $validated['weaknesses']
+                    )
+                ),
 
-            'suggestions' => array_values(
-                array_map('trim', $validated['suggestions'])
-            ),
+            'suggestions' =>
+                array_values(
+                    array_map(
+                        'trim',
+                        $validated['suggestions']
+                    )
+                ),
         ];
     }
 
-    /**
-     * Extract readable Groq error.
-     */
-    private function extractGroqError($response): string
-    {
-        return $response->json('error.message')
-            ?? 'Groq AI request failed. Please try again.';
+
+    /*
+    |--------------------------------------------------------------------------
+    | Extract Groq Error
+    |--------------------------------------------------------------------------
+    */
+
+    private function extractGroqError(
+        $response
+    ): string {
+        return $response->json(
+            'error.message'
+        )
+            ??
+            'Groq AI request failed. Please try again.';
     }
 
-    /**
-     * Return safe HTTP error status.
-     */
-    private function safeErrorStatus(int $status): int
-    {
+
+    /*
+    |--------------------------------------------------------------------------
+    | Safe HTTP Status
+    |--------------------------------------------------------------------------
+    */
+
+    private function safeErrorStatus(
+        int $status
+    ): int {
         return in_array(
             $status,
             [

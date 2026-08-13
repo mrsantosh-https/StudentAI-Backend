@@ -31,6 +31,9 @@ class User extends Authenticatable
         'github',
         'bio',
         'profile_photo',
+        'role',
+        'is_blocked',
+        'blocked_at',
     ];
 
     /**
@@ -53,6 +56,8 @@ class User extends Authenticatable
         return [
             'email_verified_at' => 'datetime',
             'password' => 'hashed',
+             'blocked_at' => 'datetime',
+             'is_blocked' => 'boolean',
         ];
     }
     public function resumes()
@@ -66,5 +71,9 @@ public function jobApplications()
 public function notifications()
 {
     return $this->hasMany(Notification::class);
+}
+public function aiUsages()
+{
+    return $this->hasMany(AIUsage::class);
 }
 }

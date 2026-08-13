@@ -4,7 +4,9 @@ use Illuminate\Http\Request;
 use App\Models\ResumeVersion;
 use Illuminate\Support\Facades\Route;
 use App\Http\Controllers\Api\AuthController;
+use App\Http\Controllers\Api\AdminUserController;
 use App\Http\Controllers\Api\ForgotPasswordController;
+use App\Http\Controllers\Api\AdminDashboardController;
 use App\Http\Controllers\Api\ProfileController;
 use App\Http\Controllers\Api\AIController;
 use App\Http\Controllers\Api\ResumeController;
@@ -15,10 +17,12 @@ use App\Http\Controllers\Api\CoverLetterController;
 use App\Http\Controllers\Api\CareerRoadmapController;
 use App\Http\Controllers\Api\JobApplicationController;
 use App\Http\Controllers\Api\JobMatcherController;
+use App\Http\Controllers\Api\AdminAIUsageController;
 use App\Http\Controllers\Api\InterviewHistoryController;
 use App\Http\Controllers\Api\NotificationController;
 use App\Http\Controllers\Api\AiCareerCoachController;
 use App\Http\Controllers\Api\MockInterviewController;
+use App\Http\Controllers\Api\AdminUserAnalyticsController;
 
 
 /*
@@ -64,15 +68,60 @@ Route::middleware('auth:sanctum')->group(function () {
     | User
     |--------------------------------------------------------------------------
     */
+        Route::middleware(['auth:sanctum', 'admin'])
+        ->prefix('admin')
+        ->group(function () {
 
-    Route::get('/user', function (Request $request) {
-        return response()->json([
-            'message' => 'Authenticated successfully',
-            'user' => $request->user(),
-        ]);
-    });
+            // Admin Dashboard
+            Route::get('/dashboard', [
+                AdminDashboardController::class,
+                'stats'
+            ]);
 
+            // User Analytics
+            Route::get('/user-analytics', [
+                AdminUserAnalyticsController::class,
+                'index'
+            ]);
 
+             Route::get('/ai-analytics', [
+                AdminAIUsageController::class,
+                'index'
+            ]);
+            // ==============================
+            // User Management
+            // ==============================
+
+            Route::get('/users', [
+                AdminUserController::class,
+                'index'
+            ]);
+
+            Route::get('/users/{user}', [
+                AdminUserController::class,
+                'show'
+            ]);
+
+            Route::patch('/users/{user}/block', [
+                AdminUserController::class,
+                'block'
+            ]);
+
+            Route::patch('/users/{user}/unblock', [
+                AdminUserController::class,
+                'unblock'
+            ]);
+
+            Route::patch('/users/{user}/role', [
+                AdminUserController::class,
+                'updateRole'
+            ]);
+
+            Route::delete('/users/{user}', [
+                AdminUserController::class,
+                'destroy'
+            ]);
+        });
     /*
     |--------------------------------------------------------------------------
     | Profile

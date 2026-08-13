@@ -61,12 +61,9 @@ Hello,
 
 We received a request to reset the password for your StudentAI account.
 
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 🔐 Your One-Time Password (OTP)
 
 {$otp}
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 ⏳ This OTP is valid for only 10 minutes.
 
