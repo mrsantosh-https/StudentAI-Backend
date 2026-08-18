@@ -18,20 +18,20 @@ class AdminUserController extends Controller
 
     public function index(Request $request)
     {
-        $query = User::query()
-            ->select([
-                'id',
-                'name',
-                'email',
-                'role',
-                'is_blocked',
-                'blocked_at',
-                'phone',
-                'profile_photo',
-                'created_at',
-                'updated_at',
-            ]);
+        $query = User::query()->select([
+            'id',
+            'name',
+            'email',
+            'role',
+            'is_blocked',
+            'blocked_at',
+            'phone',
+            'profile_photo',
+            'created_at',
+            'updated_at',
+        ]);
 
+        // Search
         if ($request->filled('search')) {
             $search = trim($request->search);
 
@@ -41,13 +41,15 @@ class AdminUserController extends Controller
             });
         }
 
+        // Role filter
         if (
             $request->filled('role') &&
-            in_array($request->role, ['user', 'admin'])
+            in_array($request->role, ['user', 'admin'], true)
         ) {
             $query->where('role', $request->role);
         }
 
+        // Status filter
         if ($request->status === 'blocked') {
             $query->where('is_blocked', true);
         }
@@ -88,6 +90,7 @@ class AdminUserController extends Controller
 
     public function block(Request $request, User $user)
     {
+        // Admin cannot block himself
         if ($request->user()->id === $user->id) {
             return response()->json([
                 'success' => false,
@@ -95,16 +98,39 @@ class AdminUserController extends Controller
             ], 422);
         }
 
-        $user->update([
-            'is_blocked' => true,
-            'blocked_at' => now(),
-        ]);
+        // Already blocked
+        if ((bool) $user->is_blocked) {
+            return response()->json([
+                'success' => false,
+                'message' => 'User is already blocked.',
+                'user' => $user->fresh(),
+            ], 422);
+        }
 
-        /*
-         * Existing Sanctum tokens remove.
-         * Blocked user gets logged out from authenticated API.
-         */
-        $user->tokens()->delete();
+        DB::transaction(function () use ($user) {
+
+            /*
+            |--------------------------------------------------------------------------
+            | Mark user as blocked
+            |--------------------------------------------------------------------------
+            */
+
+            $user->update([
+                'is_blocked' => true,
+                'blocked_at' => now(),
+            ]);
+
+            /*
+            |--------------------------------------------------------------------------
+            | Revoke ALL existing Sanctum tokens
+            |--------------------------------------------------------------------------
+            |
+            | This immediately logs the blocked user out from API authentication.
+            |
+            */
+
+            $user->tokens()->delete();
+        });
 
         return response()->json([
             'success' => true,
@@ -121,6 +147,15 @@ class AdminUserController extends Controller
 
     public function unblock(User $user)
     {
+        // Already active
+        if (!(bool) $user->is_blocked) {
+            return response()->json([
+                'success' => false,
+                'message' => 'User is already active.',
+                'user' => $user->fresh(),
+            ], 422);
+        }
+
         $user->update([
             'is_blocked' => false,
             'blocked_at' => null,
@@ -148,6 +183,7 @@ class AdminUserController extends Controller
             ],
         ]);
 
+        // Admin cannot remove his own admin role
         if (
             $request->user()->id === $user->id &&
             $validated['role'] !== 'admin'
@@ -177,6 +213,7 @@ class AdminUserController extends Controller
 
     public function destroy(Request $request, User $user)
     {
+        // Admin cannot delete himself
         if ($request->user()->id === $user->id) {
             return response()->json([
                 'success' => false,
@@ -185,7 +222,11 @@ class AdminUserController extends Controller
         }
 
         DB::transaction(function () use ($user) {
+
+            // Revoke all API tokens
             $user->tokens()->delete();
+
+            // Delete user
             $user->delete();
         });
 

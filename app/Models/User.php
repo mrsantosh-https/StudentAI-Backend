@@ -4,11 +4,14 @@ namespace App\Models;
 
 // use Illuminate\Contracts\Auth\MustVerifyEmail;
 use App\Models\Resume;
+use App\Models\LoginActivity;
 use App\Models\JobApplication;
 use Database\Factories\UserFactory;
+use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Foundation\Auth\User as Authenticatable;
 use Illuminate\Notifications\Notifiable;
+use App\Models\UserSubscription;
 use Laravel\Sanctum\HasApiTokens;
 
 
@@ -75,5 +78,26 @@ public function notifications()
 public function aiUsages()
 {
     return $this->hasMany(AIUsage::class);
+}
+public function loginActivities(): HasMany
+{
+    return $this->hasMany(LoginActivity::class);
+}
+
+public function subscriptions(): HasMany
+{
+    return $this->hasMany(
+        UserSubscription::class,
+        'user_id'
+    );
+}
+
+public function currentSubscription()
+{
+    return $this->hasOne(
+        UserSubscription::class,
+        'user_id'
+    )->where('status', 'active')
+     ->latestOfMany();
 }
 }

@@ -2,10 +2,14 @@
 
 namespace App\Models;
 
+use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
+use Illuminate\Database\Eloquent\Relations\BelongsTo;
 
 class Notification extends Model
 {
+    use HasFactory;
+
     protected $fillable = [
         'user_id',
         'title',
@@ -14,30 +18,12 @@ class Notification extends Model
         'is_read',
     ];
 
-   public function store(Request $request)
-{
-    $record = MockInterview::create([
-        'user_id' => auth()->id(),
-        'role' => $request->role,
-        'experience' => $request->experience,
-        'question' => $request->question,
-        'answer' => $request->answer,
-        'feedback' => $request->feedback,
-        'score' => $request->score,
-    ]);
+    protected $casts = [
+        'is_read' => 'boolean',
+    ];
 
-    if ($request->is_completed) {
-        Notification::create([
-            'user_id' => auth()->id(),
-            'title' => 'Mock Interview Completed',
-            'message' => 'Your mock interview result is ready.',
-            'type' => 'success',
-        ]);
+    public function user(): BelongsTo
+    {
+        return $this->belongsTo(User::class);
     }
-
-    return response()->json([
-        'message' => 'Interview saved successfully',
-        'data' => $record,
-    ], 201);
-}
 }

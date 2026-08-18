@@ -1,5 +1,7 @@
 <?php
+
 namespace App\Http\Controllers\Api;
+
 use App\Http\Controllers\Controller;
 use App\Models\Notification;
 use Illuminate\Http\JsonResponse;
@@ -49,13 +51,17 @@ class NotificationController extends Controller
         return response()->json([
             'success' => true,
             'message' => 'Notification marked as read.',
-            'notification' => $notification,
+            'notification' => $notification->fresh(),
         ]);
     }
 
-    public function markAllAsRead(Request $request): JsonResponse
-    {
-        Notification::where('user_id', $request->user()->id)
+    public function markAllAsRead(
+        Request $request
+    ): JsonResponse {
+        Notification::where(
+            'user_id',
+            $request->user()->id
+        )
             ->where('is_read', false)
             ->update([
                 'is_read' => true,
