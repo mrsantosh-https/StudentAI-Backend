@@ -7,14 +7,15 @@ use Illuminate\Support\Facades\Route;
 | API Controllers
 |--------------------------------------------------------------------------
 */
-
 use App\Http\Controllers\Api\AuthController;
 use App\Http\Controllers\Api\ForgotPasswordController;
 use App\Http\Controllers\Api\ProfileController;
 use App\Http\Controllers\Api\DashboardController;
 
+use App\Http\Controllers\Api\SubscriptionPlanController;
 use App\Http\Controllers\AdminSubscriptionPlanController;
 use App\Http\Controllers\AdminUserSubscriptionController;
+use App\Http\Controllers\Api\PaymentController;
 
 use App\Http\Controllers\Api\ResumeController;
 use App\Http\Controllers\Api\ResumeAIController;
@@ -82,6 +83,16 @@ Route::post('/forgot-password/resend-otp', [
     'resendOtp',
 ]);
 
+ /*
+    |--------------------------------------------------------------------------
+    | User Subscription Plans
+    |--------------------------------------------------------------------------
+    */
+
+    Route::get('/subscription-plans', [
+        SubscriptionPlanController::class,
+        'index',
+    ]);
 
 /*
 |--------------------------------------------------------------------------
@@ -625,4 +636,30 @@ Route::middleware('auth:sanctum')->group(function () {
         AIController::class,
         'evaluateInterviewAnswer',
     ]);
-});
+
+    /*
+|--------------------------------------------------------------------------
+| Payments
+|--------------------------------------------------------------------------
+*/
+
+    Route::post('/payment/create-order', [
+        PaymentController::class,
+        'createOrder',
+    ]);
+
+    Route::post('/payment/verify', [
+        PaymentController::class,
+        'verifyPayment',
+    ]);
+
+    Route::get('/payment/history', [
+        PaymentController::class,
+        'history',
+    ]);
+
+    Route::get(
+        '/my-subscription',
+        [PaymentController::class, 'mySubscription']
+    );
+    });

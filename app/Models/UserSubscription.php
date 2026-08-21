@@ -25,6 +25,9 @@ class UserSubscription extends Model
         'cancelled_at' => 'datetime',
     ];
 
+    /**
+     * User
+     */
     public function user(): BelongsTo
     {
         return $this->belongsTo(
@@ -33,6 +36,9 @@ class UserSubscription extends Model
         );
     }
 
+    /**
+     * Subscription Plan
+     */
     public function plan(): BelongsTo
     {
         return $this->belongsTo(
@@ -41,16 +47,22 @@ class UserSubscription extends Model
         );
     }
 
+    /**
+     * Check whether subscription is currently active.
+     */
     public function isActive(): bool
-{
-    if ($this->status !== 'active') {
-        return false;
-    }
+    {
+        if ($this->status !== 'active') {
+            return false;
+        }
 
-    if ($this->ends_at && now()->greaterThan($this->ends_at)) {
-        return false;
-    }
+        if (
+            $this->ends_at &&
+            now()->greaterThanOrEqualTo($this->ends_at)
+        ) {
+            return false;
+        }
 
-    return true;
+        return true;
+    }
 }
-}   

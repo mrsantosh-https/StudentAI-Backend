@@ -39,4 +39,9 @@ return [
     'model' => env('GROQ_MODEL', 'llama-3.1-8b-instant'),
 ],
 
+'razorpay' => [
+    'key_id' => env('RAZORPAY_KEY_ID'),
+    'key_secret' => env('RAZORPAY_KEY_SECRET'),
+],
+
 ];
