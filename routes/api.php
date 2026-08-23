@@ -40,6 +40,7 @@ use App\Http\Controllers\Api\AdminLoginActivityController;
 use App\Http\Controllers\Api\AdminNotificationController;
 
 
+
 /*
 |--------------------------------------------------------------------------
 | Public Routes
@@ -205,6 +206,32 @@ Route::middleware('auth:sanctum')->group(function () {
                 AdminNotificationController::class,
                 'destroy',
             ]);
+
+             // Notifications
+            Route::get(
+                '/notifications',
+                [NotificationController::class, 'index']
+            );
+
+            Route::post(
+                '/notifications',
+                [NotificationController::class, 'store']
+            );
+
+            Route::put(
+                '/notifications/{id}/read',
+                [NotificationController::class, 'markAsRead']
+            );
+
+            Route::put(
+                '/notifications/read-all',
+                [NotificationController::class, 'markAllAsRead']
+            );
+
+            Route::delete(
+                '/notifications/{id}',
+                [NotificationController::class, 'destroy']
+            );
 
 
             /*

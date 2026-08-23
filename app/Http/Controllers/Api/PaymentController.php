@@ -4,6 +4,7 @@ namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
 use App\Models\Payment;
+use App\Models\Notification;
 use App\Models\SubscriptionPlan;
 use App\Models\UserSubscription;
 use Illuminate\Http\Request;
@@ -30,6 +31,10 @@ class PaymentController extends Controller
             ],
         ]);
 
+        // --------------------------------------------------------
+        // AUTHENTICATED USER
+        // --------------------------------------------------------
+
         $user = $request->user();
 
         if (!$user) {
@@ -51,8 +56,7 @@ class PaymentController extends Controller
         if (!$plan) {
             return response()->json([
                 'success' => false,
-                'message' =>
-                    'Subscription plan is not available.',
+                'message' => 'Subscription plan is not available.',
             ], 404);
         }
 
@@ -66,26 +70,19 @@ class PaymentController extends Controller
             return response()->json([
                 'success' => true,
                 'free_plan' => true,
-                'message' =>
-                    'This plan does not require payment.',
+                'message' => 'This plan does not require payment.',
                 'plan' => $plan,
-            ]);
+            ], 200);
         }
 
         // --------------------------------------------------------
         // RAZORPAY CONFIG
         // --------------------------------------------------------
 
-        $keyId =
-            config('services.razorpay.key_id');
+        $keyId = config('services.razorpay.key_id');
+        $keySecret = config('services.razorpay.key_secret');
 
-        $keySecret =
-            config('services.razorpay.key_secret');
-
-        if (
-            empty($keyId) ||
-            empty($keySecret)
-        ) {
+        if (empty($keyId) || empty($keySecret)) {
             Log::error(
                 'Razorpay credentials are missing.',
                 [
@@ -105,20 +102,17 @@ class PaymentController extends Controller
         // AMOUNT IN PAISE
         // --------------------------------------------------------
 
-        $amount = (int) round(
-            $price * 100
-        );
+        $amount = (int) round($price * 100);
 
         if ($amount <= 0) {
             return response()->json([
                 'success' => false,
-                'message' =>
-                    'Invalid subscription amount.',
+                'message' => 'Invalid subscription amount.',
             ], 422);
         }
 
         // --------------------------------------------------------
-        // CREATE ORDER
+        // CREATE RAZORPAY ORDER
         // --------------------------------------------------------
 
         try {
@@ -156,6 +150,10 @@ class PaymentController extends Controller
                         (string) $plan->name,
                 ],
             ]);
+
+            // ----------------------------------------------------
+            // VALIDATE RAZORPAY ORDER
+            // ----------------------------------------------------
 
             if (
                 !isset($order['id']) ||
@@ -200,6 +198,10 @@ class PaymentController extends Controller
                 'status' =>
                     'created',
             ]);
+
+            // ----------------------------------------------------
+            // RESPONSE
+            // ----------------------------------------------------
 
             return response()->json([
                 'success' => true,
@@ -263,17 +265,23 @@ class PaymentController extends Controller
                     config('app.debug')
                         ? $e->getMessage()
                         : null,
+
             ], 500);
         }
     }
 
+
     /**
      * ============================================================
-     * VERIFY PAYMENT
+     * VERIFY RAZORPAY PAYMENT
      * ============================================================
      */
     public function verifyPayment(Request $request)
     {
+        // --------------------------------------------------------
+        // VALIDATION
+        // --------------------------------------------------------
+
         $validated = $request->validate([
             'razorpay_payment_id' => [
                 'required',
@@ -296,18 +304,21 @@ class PaymentController extends Controller
             ],
         ]);
 
+        // --------------------------------------------------------
+        // AUTHENTICATED USER
+        // --------------------------------------------------------
+
         $user = $request->user();
 
         if (!$user) {
             return response()->json([
                 'success' => false,
-                'message' =>
-                    'Unauthenticated.',
+                'message' => 'Unauthenticated.',
             ], 401);
         }
 
         // --------------------------------------------------------
-        // FIND OUR PAYMENT
+        // FIND PAYMENT
         // --------------------------------------------------------
 
         $payment = Payment::query()
@@ -324,8 +335,7 @@ class PaymentController extends Controller
         if (!$payment) {
             return response()->json([
                 'success' => false,
-                'message' =>
-                    'Payment order not found.',
+                'message' => 'Payment order not found.',
             ], 404);
         }
 
@@ -333,25 +343,19 @@ class PaymentController extends Controller
         // IDEMPOTENCY
         // --------------------------------------------------------
 
-        if (
-            $payment->status === 'paid'
-        ) {
+        if ($payment->status === 'paid') {
             return response()->json([
                 'success' => true,
-                'message' =>
-                    'Payment already verified.',
-            ]);
+                'message' => 'Payment already verified.',
+            ], 200);
         }
 
         // --------------------------------------------------------
-        // CONFIG
+        // RAZORPAY CONFIG
         // --------------------------------------------------------
 
-        $keyId =
-            config('services.razorpay.key_id');
-
-        $keySecret =
-            config('services.razorpay.key_secret');
+        $keyId = config('services.razorpay.key_id');
+        $keySecret = config('services.razorpay.key_secret');
 
         if (
             empty($keyId) ||
@@ -376,34 +380,28 @@ class PaymentController extends Controller
         }
 
         // --------------------------------------------------------
-        // VERIFY SIGNATURE
+        // VERIFY RAZORPAY SIGNATURE
         // --------------------------------------------------------
 
         try {
+
             $api = new Api(
                 $keyId,
                 $keySecret
             );
 
-            $api->utility
-                ->verifyPaymentSignature([
-                    'razorpay_order_id' =>
-                        $payment->razorpay_order_id,
+            $api->utility->verifyPaymentSignature([
+                'razorpay_order_id' =>
+                    $payment->razorpay_order_id,
 
-                    'razorpay_payment_id' =>
-                        $validated[
-                            'razorpay_payment_id'
-                        ],
+                'razorpay_payment_id' =>
+                    $validated['razorpay_payment_id'],
 
-                    'razorpay_signature' =>
-                        $validated[
-                            'razorpay_signature'
-                        ],
-                ]);
+                'razorpay_signature' =>
+                    $validated['razorpay_signature'],
+            ]);
 
-        } catch (
-            SignatureVerificationError $e
-        ) {
+        } catch (SignatureVerificationError $e) {
 
             $payment->update([
                 'status' =>
@@ -466,6 +464,7 @@ class PaymentController extends Controller
                     config('app.debug')
                         ? $e->getMessage()
                         : null,
+
             ], 500);
         }
 
@@ -475,7 +474,7 @@ class PaymentController extends Controller
 
         try {
 
-            DB::transaction(
+            $plan = DB::transaction(
                 function () use (
                     $payment,
                     $validated,
@@ -486,18 +485,16 @@ class PaymentController extends Controller
                     // GET PLAN
                     // --------------------------------------------
 
-                    $plan =
-                        SubscriptionPlan::query()
-                            ->where(
-                                'id',
-                                $payment
-                                    ->subscription_plan_id
-                            )
-                            ->where(
-                                'is_active',
-                                true
-                            )
-                            ->first();
+                    $plan = SubscriptionPlan::query()
+                        ->where(
+                            'id',
+                            $payment->subscription_plan_id
+                        )
+                        ->where(
+                            'is_active',
+                            true
+                        )
+                        ->first();
 
                     if (!$plan) {
                         throw new \RuntimeException(
@@ -506,7 +503,7 @@ class PaymentController extends Controller
                     }
 
                     // --------------------------------------------
-                    // CANCEL OLD SUBSCRIPTION
+                    // CANCEL OLD ACTIVE SUBSCRIPTION
                     // --------------------------------------------
 
                     UserSubscription::query()
@@ -536,17 +533,16 @@ class PaymentController extends Controller
                     // BILLING PERIOD
                     // --------------------------------------------
 
-                    $billingPeriod =
-                        strtolower(
-                            trim(
-                                (string) (
-                                    $plan->billing_period ??
-                                    $plan->billing_cycle ??
-                                    $plan->interval ??
-                                    'monthly'
-                                )
+                    $billingPeriod = strtolower(
+                        trim(
+                            (string) (
+                                $plan->billing_period
+                                ?? $plan->billing_cycle
+                                ?? $plan->interval
+                                ?? 'monthly'
                             )
-                        );
+                        )
+                    );
 
                     // --------------------------------------------
                     // END DATE
@@ -564,15 +560,16 @@ class PaymentController extends Controller
                             true
                         )
                     ) {
-                        $endsAt =
-                            $startsAt
-                                ->copy()
-                                ->addYear();
+
+                        $endsAt = $startsAt
+                            ->copy()
+                            ->addYear();
+
                     } else {
-                        $endsAt =
-                            $startsAt
-                                ->copy()
-                                ->addMonth();
+
+                        $endsAt = $startsAt
+                            ->copy()
+                            ->addMonth();
                     }
 
                     // --------------------------------------------
@@ -617,15 +614,53 @@ class PaymentController extends Controller
                         'paid_at' =>
                             now(),
                     ]);
+
+                    return $plan;
                 }
             );
+
+            // ----------------------------------------------------
+            // CREATE NOTIFICATION
+            // ----------------------------------------------------
+
+            Notification::create([
+                'user_id' =>
+                    $user->id,
+
+                'title' =>
+                    'Subscription Activated 🎉',
+
+                'message' =>
+                    'Your ' .
+                    $plan->name .
+                    ' subscription has been activated successfully.',
+
+                'type' =>
+                    'success',
+
+                'is_read' =>
+                    false,
+            ]);
+
+            // ----------------------------------------------------
+            // SUCCESS RESPONSE
+            // ----------------------------------------------------
 
             return response()->json([
                 'success' => true,
 
                 'message' =>
                     'Payment verified and subscription activated.',
-            ]);
+
+                'subscription' => [
+                    'plan_id' =>
+                        $plan->id,
+
+                    'plan_name' =>
+                        $plan->name,
+                ],
+
+            ], 200);
 
         } catch (Throwable $e) {
 
@@ -659,9 +694,11 @@ class PaymentController extends Controller
                     config('app.debug')
                         ? $e->getMessage()
                         : null,
+
             ], 500);
         }
     }
+
 
     /**
      * ============================================================
@@ -675,8 +712,7 @@ class PaymentController extends Controller
         if (!$user) {
             return response()->json([
                 'success' => false,
-                'message' =>
-                    'Unauthenticated.',
+                'message' => 'Unauthenticated.',
             ], 401);
         }
 
@@ -692,149 +728,183 @@ class PaymentController extends Controller
         return response()->json([
             'success' => true,
             'payments' => $payments,
-        ]);
+        ], 200);
     }
+
 
     /**
- * ============================================================
- * MY SUBSCRIPTION
- * ============================================================
- */
-public function mySubscription(Request $request)
-{
-    $user = $request->user();
+     * ============================================================
+     * MY SUBSCRIPTION
+     * ============================================================
+     */
+    public function mySubscription(Request $request)
+    {
+        // --------------------------------------------------------
+        // AUTHENTICATED USER
+        // --------------------------------------------------------
 
-    if (!$user) {
-        return response()->json([
-            'success' => false,
-            'message' => 'Unauthenticated.',
-        ], 401);
-    }
+        $user = $request->user();
 
-    /*
-    |--------------------------------------------------------------------------
-    | Find current active subscription
-    |--------------------------------------------------------------------------
-    */
+        if (!$user) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Unauthenticated.',
+            ], 401);
+        }
 
-    $subscription = UserSubscription::query()
-        ->with('plan')
-        ->where('user_id', $user->id)
-        ->where('status', 'active')
-        ->latest('starts_at')
-        ->first();
+        // --------------------------------------------------------
+        // FIND ACTIVE SUBSCRIPTION
+        // --------------------------------------------------------
 
-    /*
-    |--------------------------------------------------------------------------
-    | No active subscription
-    |--------------------------------------------------------------------------
-    */
-
-    if (!$subscription) {
-        return response()->json([
-            'success' => true,
-            'has_subscription' => false,
-            'message' => 'No active subscription found.',
-            'subscription' => null,
-        ], 200);
-    }
-
-    /*
-    |--------------------------------------------------------------------------
-    | Check expiration
-    |--------------------------------------------------------------------------
-    */
-
-    if (
-        $subscription->ends_at &&
-        now()->greaterThanOrEqualTo($subscription->ends_at)
-    ) {
-        $subscription->update([
-            'status' => 'expired',
-        ]);
-
-        return response()->json([
-            'success' => true,
-            'has_subscription' => false,
-            'message' => 'Your subscription has expired.',
-            'subscription' => null,
-        ], 200);
-    }
-
-    /*
-    |--------------------------------------------------------------------------
-    | Calculate remaining days
-    |--------------------------------------------------------------------------
-    */
-
-    $remainingDays = null;
-
-    if ($subscription->ends_at) {
-        $remainingDays = max(
-            0,
-            now()->diffInDays(
-                $subscription->ends_at,
-                false
+        $subscription = UserSubscription::query()
+            ->with('plan')
+            ->where(
+                'user_id',
+                $user->id
             )
-        );
+            ->where(
+                'status',
+                'active'
+            )
+            ->latest('starts_at')
+            ->first();
+
+        // --------------------------------------------------------
+        // NO ACTIVE SUBSCRIPTION
+        // --------------------------------------------------------
+
+        if (!$subscription) {
+            return response()->json([
+                'success' =>
+                    true,
+
+                'has_subscription' =>
+                    false,
+
+                'message' =>
+                    'No active subscription found.',
+
+                'subscription' =>
+                    null,
+
+            ], 200);
+        }
+
+        // --------------------------------------------------------
+        // CHECK EXPIRATION
+        // --------------------------------------------------------
+
+        if (
+            $subscription->ends_at &&
+            now()->greaterThanOrEqualTo(
+                $subscription->ends_at
+            )
+        ) {
+
+            $subscription->update([
+                'status' =>
+                    'expired',
+            ]);
+
+            return response()->json([
+                'success' =>
+                    true,
+
+                'has_subscription' =>
+                    false,
+
+                'message' =>
+                    'Your subscription has expired.',
+
+                'subscription' =>
+                    null,
+
+            ], 200);
+        }
+
+        // --------------------------------------------------------
+        // CALCULATE REMAINING DAYS
+        // --------------------------------------------------------
+
+        $remainingDays = null;
+
+        if ($subscription->ends_at) {
+
+            $remainingDays = max(
+                0,
+                now()->diffInDays(
+                    $subscription->ends_at,
+                    false
+                )
+            );
+        }
+
+        // --------------------------------------------------------
+        // RETURN SUBSCRIPTION
+        // --------------------------------------------------------
+
+        return response()->json([
+            'success' =>
+                true,
+
+            'has_subscription' =>
+                true,
+
+            'subscription' => [
+                'id' =>
+                    $subscription->id,
+
+                'status' =>
+                    $subscription->status,
+
+                'starts_at' =>
+                    $subscription->starts_at,
+
+                'ends_at' =>
+                    $subscription->ends_at,
+
+                'remaining_days' =>
+                    $remainingDays,
+
+                'plan' =>
+                    $subscription->plan
+                        ? [
+                            'id' =>
+                                $subscription->plan->id,
+
+                            'name' =>
+                                $subscription->plan->name,
+
+                            'description' =>
+                                $subscription->plan->description,
+
+                            'price' =>
+                                $subscription->plan->price,
+
+                            'billing_period' =>
+                                $subscription->plan->billing_period,
+
+                            'resume_limit' =>
+                                $subscription->plan->resume_limit,
+
+                            'ai_usage_limit' =>
+                                $subscription->plan->ai_usage_limit,
+
+                            'interview_limit' =>
+                                $subscription->plan->interview_limit,
+
+                            'job_tracker_limit' =>
+                                $subscription->plan->job_tracker_limit,
+
+                            'cover_letter_limit' =>
+                                $subscription->plan->cover_letter_limit,
+
+                            'career_coach_limit' =>
+                                $subscription->plan->career_coach_limit,
+                        ]
+                        : null,
+            ],
+
+        ], 200);
     }
-
-    /*
-    |--------------------------------------------------------------------------
-    | Return subscription
-    |--------------------------------------------------------------------------
-    */
-
-    return response()->json([
-        'success' => true,
-        'has_subscription' => true,
-
-        'subscription' => [
-            'id' => $subscription->id,
-
-            'status' => $subscription->status,
-
-            'starts_at' => $subscription->starts_at,
-
-            'ends_at' => $subscription->ends_at,
-
-            'remaining_days' => $remainingDays,
-
-            'plan' => $subscription->plan
-                ? [
-                    'id' => $subscription->plan->id,
-
-                    'name' => $subscription->plan->name,
-
-                    'description' =>
-                        $subscription->plan->description,
-
-                    'price' =>
-                        $subscription->plan->price,
-
-                    'billing_period' =>
-                        $subscription->plan->billing_period,
-
-                    'resume_limit' =>
-                        $subscription->plan->resume_limit,
-
-                    'ai_usage_limit' =>
-                        $subscription->plan->ai_usage_limit,
-
-                    'interview_limit' =>
-                        $subscription->plan->interview_limit,
-
-                    'job_tracker_limit' =>
-                        $subscription->plan->job_tracker_limit,
-
-                    'cover_letter_limit' =>
-                        $subscription->plan->cover_letter_limit,
-
-                    'career_coach_limit' =>
-                        $subscription->plan->career_coach_limit,
-                ]
-                : null,
-        ],
-    ], 200);
-}
 }
