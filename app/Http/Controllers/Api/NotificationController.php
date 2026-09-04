@@ -4,6 +4,7 @@ namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
 use App\Models\Notification;
+use App\Models\NotificationPreference;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Throwable;
@@ -84,9 +85,8 @@ class NotificationController extends Controller
     /**
      * Mark all notifications as read
      */
-    public function markAllAsRead(
-        Request $request
-    ): JsonResponse {
+    public function markAllAsRead(Request $request): JsonResponse
+    {
         $user = $request->user();
 
         if (!$user) {
@@ -148,6 +148,8 @@ class NotificationController extends Controller
 
     /**
      * Create notification
+     *
+     * This method respects user's notification preferences.
      */
     public function store(Request $request): JsonResponse
     {
@@ -177,9 +179,103 @@ class NotificationController extends Controller
                 'string',
                 'in:info,success,warning,danger',
             ],
+
+            'category' => [
+                'nullable',
+                'string',
+                'in:support,ai,job,marketing,system',
+            ],
         ]);
 
         try {
+            $preferences = NotificationPreference::firstOrCreate(
+                ['user_id' => $user->id],
+                [
+                    'in_app_notifications' => true,
+                    'email_notifications' => true,
+                    'support_notifications' => true,
+                    'ai_notifications' => true,
+                    'job_notifications' => true,
+                    'marketing_notifications' => false,
+                ]
+            );
+
+            /*
+            |--------------------------------------------------------------------------
+            | Master In-App Notification Switch
+            |--------------------------------------------------------------------------
+            */
+            if (!$preferences->in_app_notifications) {
+                return response()->json([
+                    'success' => true,
+                    'skipped' => true,
+                    'message' => 'In-app notifications are disabled.',
+                    'notification' => null,
+                ]);
+            }
+
+            $category = $validated['category'] ?? 'system';
+
+            /*
+            |--------------------------------------------------------------------------
+            | Category Preferences
+            |--------------------------------------------------------------------------
+            */
+
+            if (
+                $category === 'support' &&
+                !$preferences->support_notifications
+            ) {
+                return response()->json([
+                    'success' => true,
+                    'skipped' => true,
+                    'message' => 'Support notifications are disabled.',
+                    'notification' => null,
+                ]);
+            }
+
+            if (
+                $category === 'ai' &&
+                !$preferences->ai_notifications
+            ) {
+                return response()->json([
+                    'success' => true,
+                    'skipped' => true,
+                    'message' => 'AI notifications are disabled.',
+                    'notification' => null,
+                ]);
+            }
+
+            if (
+                $category === 'job' &&
+                !$preferences->job_notifications
+            ) {
+                return response()->json([
+                    'success' => true,
+                    'skipped' => true,
+                    'message' => 'Job notifications are disabled.',
+                    'notification' => null,
+                ]);
+            }
+
+            if (
+                $category === 'marketing' &&
+                !$preferences->marketing_notifications
+            ) {
+                return response()->json([
+                    'success' => true,
+                    'skipped' => true,
+                    'message' => 'Marketing notifications are disabled.',
+                    'notification' => null,
+                ]);
+            }
+
+            /*
+            |--------------------------------------------------------------------------
+            | Create Notification
+            |--------------------------------------------------------------------------
+            */
+
             $notification = Notification::create([
                 'user_id' => $user->id,
                 'title' => $validated['title'],
@@ -190,6 +286,7 @@ class NotificationController extends Controller
 
             return response()->json([
                 'success' => true,
+                'skipped' => false,
                 'message' => 'Notification created successfully.',
                 'notification' => $notification,
             ], 201);

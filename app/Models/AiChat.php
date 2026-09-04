@@ -15,14 +15,13 @@ class AiChat extends Model
         'disliked',
     ];
 
+    protected $casts = [
+        'liked' => 'boolean',
+        'disliked' => 'boolean',
+    ];
+
     public function user()
     {
-        AiChat::create([
-    'user_id' => $request->user()->id,
-    'question' => $request->message,
-    'answer' => $reply,
-    'model' => 'groq-llama',
-]);
         return $this->belongsTo(User::class);
     }
 }

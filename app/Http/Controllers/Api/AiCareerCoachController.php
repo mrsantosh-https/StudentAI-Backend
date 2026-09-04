@@ -10,6 +10,12 @@ use Illuminate\Support\Facades\Http;
 
 class AiCareerCoachController extends Controller
 {
+    /*
+    |--------------------------------------------------------------------------
+    | Send AI Chat Message
+    |--------------------------------------------------------------------------
+    */
+
     public function chat(Request $request)
     {
         $request->validate([
@@ -27,6 +33,11 @@ class AiCareerCoachController extends Controller
 
         $apiKey = env('GROQ_API_KEY');
 
+        $model = env(
+            'GROQ_MODEL',
+            'groq/compound-mini'
+        );
+
         if (!$apiKey) {
             AIUsageService::failed(
                 'ai_career_coach',
@@ -40,16 +51,27 @@ class AiCareerCoachController extends Controller
         }
 
         $systemPrompt =
-            'You are StudentAI Career Coach. Reply in simple Hinglish. Help students with resume, jobs, interview, roadmap, and skills.';
+            'You are StudentAI Career Coach. '
+            . 'Reply in simple Hinglish. '
+            . 'Help students with resume, jobs, interview preparation, '
+            . 'career roadmap, programming skills, and career guidance. '
+            . 'Give practical and clear answers.';
 
         try {
-            $response = Http::timeout(30)
+
+            /*
+            |--------------------------------------------------------------------------
+            | Call Groq API
+            |--------------------------------------------------------------------------
+            */
+
+            $response = Http::timeout(60)
                 ->withToken($apiKey)
                 ->acceptJson()
                 ->post(
                     'https://api.groq.com/openai/v1/chat/completions',
                     [
-                        'model' => 'llama-3.1-8b-instant',
+                        'model' => $model,
 
                         'messages' => [
                             [
@@ -58,26 +80,30 @@ class AiCareerCoachController extends Controller
                             ],
                             [
                                 'role' => 'user',
-                                'content' => trim($request->message),
+                                'content' => trim(
+                                    $request->message
+                                ),
                             ],
                         ],
 
                         'temperature' => 0.7,
+
                         'max_tokens' => 800,
                     ]
                 );
 
             /*
             |--------------------------------------------------------------------------
-            | Groq API Failed
+            | Handle Groq API Error
             |--------------------------------------------------------------------------
             */
 
             if (!$response->successful()) {
+
                 $errorMessage =
-                    $response->json('error.message') ??
-                    $response->body() ??
-                    'Groq API request failed.';
+                    $response->json('error.message')
+                    ?? $response->body()
+                    ?? 'Groq API request failed.';
 
                 AIUsageService::failed(
                     'ai_career_coach',
@@ -100,7 +126,11 @@ class AiCareerCoachController extends Controller
                 'choices.0.message.content'
             );
 
-            if (!is_string($reply) || trim($reply) === '') {
+            if (
+                !is_string($reply)
+                || trim($reply) === ''
+            ) {
+
                 AIUsageService::failed(
                     'ai_career_coach',
                     'AI response empty.'
@@ -116,20 +146,22 @@ class AiCareerCoachController extends Controller
 
             /*
             |--------------------------------------------------------------------------
-            | Read Token Usage From Groq Response
+            | Token Usage
             |--------------------------------------------------------------------------
             */
 
             $promptTokens =
                 (int) (
-                    $response->json('usage.prompt_tokens')
-                    ?? 0
+                    $response->json(
+                        'usage.prompt_tokens'
+                    ) ?? 0
                 );
 
             $completionTokens =
                 (int) (
-                    $response->json('usage.completion_tokens')
-                    ?? 0
+                    $response->json(
+                        'usage.completion_tokens'
+                    ) ?? 0
                 );
 
             /*
@@ -147,7 +179,7 @@ class AiCareerCoachController extends Controller
 
                 'answer' => $reply,
 
-                'model' => 'llama-3.1-8b-instant',
+                'model' => $model,
 
                 'liked' => false,
 
@@ -156,7 +188,7 @@ class AiCareerCoachController extends Controller
 
             /*
             |--------------------------------------------------------------------------
-            | AI Usage Success Tracking
+            | AI Usage Tracking
             |--------------------------------------------------------------------------
             */
 
@@ -168,13 +200,15 @@ class AiCareerCoachController extends Controller
 
             /*
             |--------------------------------------------------------------------------
-            | Response
+            | Return Response
             |--------------------------------------------------------------------------
             */
 
             return response()->json([
                 'success' => true,
+
                 'reply' => $reply,
+
                 'chat' => $chat,
 
                 'usage' => [
@@ -185,16 +219,12 @@ class AiCareerCoachController extends Controller
                         $completionTokens,
 
                     'total_tokens' =>
-                        $promptTokens +
-                        $completionTokens,
+                        $promptTokens
+                        + $completionTokens,
                 ],
             ]);
+
         } catch (\Throwable $error) {
-            /*
-            |--------------------------------------------------------------------------
-            | Track Unexpected Failure
-            |--------------------------------------------------------------------------
-            */
 
             AIUsageService::failed(
                 'ai_career_coach',
@@ -203,16 +233,18 @@ class AiCareerCoachController extends Controller
 
             return response()->json([
                 'success' => false,
+
                 'reply' =>
-                    'Server error: ' .
-                    $error->getMessage(),
+                    'Server error: '
+                    . $error->getMessage(),
             ], 500);
         }
     }
 
+
     /*
     |--------------------------------------------------------------------------
-    | Chat History
+    | Get Chat History
     |--------------------------------------------------------------------------
     */
 
@@ -240,6 +272,7 @@ class AiCareerCoachController extends Controller
         ]);
     }
 
+
     /*
     |--------------------------------------------------------------------------
     | Delete Single Chat
@@ -250,14 +283,8 @@ class AiCareerCoachController extends Controller
         Request $request,
         $id
     ) {
-        $user = $request->user();
 
-        if (!$user) {
-            return response()->json([
-                'success' => false,
-                'message' => 'Unauthenticated.',
-            ], 401);
-        }
+        $user = $request->user();
 
         $chat = AiChat::where(
             'user_id',
@@ -275,22 +302,16 @@ class AiCareerCoachController extends Controller
         ]);
     }
 
+
     /*
     |--------------------------------------------------------------------------
-    | Clear All Chat History
+    | Clear All Chats
     |--------------------------------------------------------------------------
     */
 
     public function clearAll(Request $request)
     {
         $user = $request->user();
-
-        if (!$user) {
-            return response()->json([
-                'success' => false,
-                'message' => 'Unauthenticated.',
-            ], 401);
-        }
 
         $deletedCount = AiChat::where(
             'user_id',
@@ -308,9 +329,10 @@ class AiCareerCoachController extends Controller
         ]);
     }
 
+
     /*
     |--------------------------------------------------------------------------
-    | Feedback
+    | Like / Dislike Feedback
     |--------------------------------------------------------------------------
     */
 
@@ -318,18 +340,13 @@ class AiCareerCoachController extends Controller
         Request $request,
         $id
     ) {
+
         $request->validate([
-            'type' => 'required|in:like,dislike',
+            'type' =>
+                'required|in:like,dislike',
         ]);
 
         $user = $request->user();
-
-        if (!$user) {
-            return response()->json([
-                'success' => false,
-                'message' => 'Unauthenticated.',
-            ], 401);
-        }
 
         $chat = AiChat::where(
             'user_id',
@@ -338,14 +355,20 @@ class AiCareerCoachController extends Controller
             ->where('id', $id)
             ->firstOrFail();
 
-        $chat->update([
-            'liked' =>
-                $request->type === 'like',
+        if ($request->type === 'like') {
 
-            'disliked' =>
-                $request->type ===
-                'dislike',
-        ]);
+            $chat->update([
+                'liked' => true,
+                'disliked' => false,
+            ]);
+
+        } else {
+
+            $chat->update([
+                'liked' => false,
+                'disliked' => true,
+            ]);
+        }
 
         return response()->json([
             'success' => true,

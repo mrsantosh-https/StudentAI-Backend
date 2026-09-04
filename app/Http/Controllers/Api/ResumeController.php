@@ -4,21 +4,14 @@ namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
 use App\Models\Resume;
-use App\Services\SubscriptionLimitService;
+use App\Models\ResumeVersion;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use Throwable;
 
 class ResumeController extends Controller
 {
-    protected SubscriptionLimitService $subscriptionLimit;
-
-    public function __construct(
-        SubscriptionLimitService $subscriptionLimit
-    ) {
-        $this->subscriptionLimit = $subscriptionLimit;
-    }
-
     /**
      * ============================================================
      * LIST USER RESUMES
@@ -40,16 +33,9 @@ class ResumeController extends Controller
             ->latest()
             ->get();
 
-        $usage = $this->subscriptionLimit->getUsage(
-            $user,
-            'resume'
-        );
-
         return response()->json([
             'success' => true,
             'resumes' => $resumes,
-
-            'usage' => $usage,
         ], 200);
     }
 
@@ -58,10 +44,8 @@ class ResumeController extends Controller
      * SHOW SINGLE RESUME
      * ============================================================
      */
-    public function show(
-        Request $request,
-        $id
-    ) {
+    public function show(Request $request, $id)
+    {
         $user = $request->user();
 
         if (!$user) {
@@ -105,49 +89,11 @@ class ResumeController extends Controller
             ], 401);
         }
 
-        /*
-        |--------------------------------------------------------------------------
-        | SUBSCRIPTION LIMIT CHECK
-        |--------------------------------------------------------------------------
-        |
-        | IMPORTANT:
-        | This check is done on backend.
-        | Frontend cannot bypass this.
-        |
-        */
-        try {
-            $this->subscriptionLimit->check(
-                $user,
-                'resume'
-            );
-        } catch (Throwable $e) {
-
-            Log::warning(
-                'Resume subscription limit reached.',
-                [
-                    'user_id' => $user->id,
-                    'error' => $e->getMessage(),
-                ]
-            );
-
-            return response()->json([
-                'success' => false,
-                'message' => $e->getMessage(),
-                'code' => 'RESUME_LIMIT_REACHED',
-
-                'usage' => $this->subscriptionLimit->getUsage(
-                    $user,
-                    'resume'
-                ),
-            ], 403);
-        }
-
-        /*
-        |--------------------------------------------------------------------------
-        | VALIDATION
-        |--------------------------------------------------------------------------
-        */
-
+        /**
+         * --------------------------------------------------------
+         * VALIDATION
+         * --------------------------------------------------------
+         */
         $validated = $request->validate([
             'title' => [
                 'nullable',
@@ -259,14 +205,12 @@ class ResumeController extends Controller
             ],
         ]);
 
-        /*
-        |--------------------------------------------------------------------------
-        | CREATE RESUME
-        |--------------------------------------------------------------------------
-        */
-
+        /**
+         * --------------------------------------------------------
+         * CREATE
+         * --------------------------------------------------------
+         */
         try {
-
             $resume = Resume::create([
                 'user_id' => $user->id,
 
@@ -332,17 +276,6 @@ class ResumeController extends Controller
                     $validated['experience'] ?? null,
             ]);
 
-            /*
-            |--------------------------------------------------------------------------
-            | UPDATED USAGE
-            |--------------------------------------------------------------------------
-            */
-
-            $usage = $this->subscriptionLimit->getUsage(
-                $user,
-                'resume'
-            );
-
             return response()->json([
                 'success' => true,
 
@@ -351,9 +284,6 @@ class ResumeController extends Controller
 
                 'resume' =>
                     $resume,
-
-                'usage' =>
-                    $usage,
             ], 201);
 
         } catch (Throwable $e) {
@@ -386,11 +316,25 @@ class ResumeController extends Controller
      * ============================================================
      * UPDATE RESUME
      * ============================================================
+     *
+     * Before updating the resume, the current resume data is saved
+     * into resume_versions table.
+     *
+     * Example:
+     *
+     * Current Resume = Version 1
+     * User edits resume
+     * Old data -> Version 1
+     * Updated resume -> Current Resume
+     *
+     * Next edit:
+     * Current data -> Version 2
+     * Updated resume -> Current Resume
+     *
+     * ============================================================
      */
-    public function update(
-        Request $request,
-        $id
-    ) {
+    public function update(Request $request, $id)
+    {
         $user = $request->user();
 
         if (!$user) {
@@ -400,12 +344,11 @@ class ResumeController extends Controller
             ], 401);
         }
 
-        /*
-        |--------------------------------------------------------------------------
-        | FIND USER'S RESUME
-        |--------------------------------------------------------------------------
-        */
-
+        /**
+         * --------------------------------------------------------
+         * FIND USER'S RESUME
+         * --------------------------------------------------------
+         */
         $resume = Resume::query()
             ->where('id', $id)
             ->where('user_id', $user->id)
@@ -418,12 +361,11 @@ class ResumeController extends Controller
             ], 404);
         }
 
-        /*
-        |--------------------------------------------------------------------------
-        | VALIDATION
-        |--------------------------------------------------------------------------
-        */
-
+        /**
+         * --------------------------------------------------------
+         * VALIDATION
+         * --------------------------------------------------------
+         */
         $validated = $request->validate([
             'title' => [
                 'nullable',
@@ -535,76 +477,179 @@ class ResumeController extends Controller
             ],
         ]);
 
-        /*
-        |--------------------------------------------------------------------------
-        | UPDATE
-        |--------------------------------------------------------------------------
-        */
-
+        /**
+         * --------------------------------------------------------
+         * UPDATE + CREATE VERSION
+         * --------------------------------------------------------
+         */
         try {
 
-            $resume->update([
-                'title' =>
-                    $validated['title']
-                    ?? ($validated['fullName'] . ' Resume'),
+            DB::transaction(function () use (
+                $resume,
+                $user,
+                $validated
+            ) {
 
-                'template' =>
-                    $validated['template'],
+                /**
+                 * ------------------------------------------------
+                 * GET NEXT VERSION NUMBER
+                 * ------------------------------------------------
+                 */
+                $lastVersion = ResumeVersion::query()
+                    ->where('resume_id', $resume->id)
+                    ->where('user_id', $user->id)
+                    ->max('version_number');
 
-                'full_name' =>
-                    $validated['fullName'],
+                $nextVersion =
+                    ($lastVersion ?? 0) + 1;
 
-                'designation' =>
-                    $validated['designation'] ?? null,
+                /**
+                 * ------------------------------------------------
+                 * SAVE CURRENT RESUME AS VERSION
+                 * ------------------------------------------------
+                 */
+                ResumeVersion::create([
+                    'resume_id' =>
+                        $resume->id,
 
-                'email' =>
-                    $validated['email'],
+                    'user_id' =>
+                        $user->id,
 
-                'phone' =>
-                    $validated['phone'] ?? null,
+                    'version_number' =>
+                        $nextVersion,
 
-                'address' =>
-                    $validated['address'] ?? null,
+                    'title' =>
+                        $resume->title,
 
-                'city' =>
-                    $validated['city'] ?? null,
+                    'full_name' =>
+                        $resume->full_name,
 
-                'state' =>
-                    $validated['state'] ?? null,
+                    'designation' =>
+                        $resume->designation,
 
-                'country' =>
-                    $validated['country'] ?? null,
+                    'email' =>
+                        $resume->email,
 
-                'pincode' =>
-                    $validated['pincode'] ?? null,
+                    'phone' =>
+                        $resume->phone,
 
-                'linkedin' =>
-                    $validated['linkedin'] ?? null,
+                    'address' =>
+                        $resume->address,
 
-                'github' =>
-                    $validated['github'] ?? null,
+                    'city' =>
+                        $resume->city,
 
-                'portfolio' =>
-                    $validated['portfolio'] ?? null,
+                    'state' =>
+                        $resume->state,
 
-                'career_objective' =>
-                    $validated['careerObjective'] ?? null,
+                    'country' =>
+                        $resume->country,
 
-                'summary' =>
-                    $validated['summary'] ?? null,
+                    'pincode' =>
+                        $resume->pincode,
 
-                'education' =>
-                    $validated['education'] ?? null,
+                    'linkedin' =>
+                        $resume->linkedin,
 
-                'skills' =>
-                    $validated['skills'] ?? null,
+                    'github' =>
+                        $resume->github,
 
-                'projects' =>
-                    $validated['projects'] ?? null,
+                    'portfolio' =>
+                        $resume->portfolio,
 
-                'experience' =>
-                    $validated['experience'] ?? null,
-            ]);
+                    'career_objective' =>
+                        $resume->career_objective,
+
+                    'summary' =>
+                        $resume->summary,
+
+                    'education' =>
+                        $resume->education,
+
+                    'skills' =>
+                        $resume->skills,
+
+                    'projects' =>
+                        $resume->projects,
+
+                    'experience' =>
+                        $resume->experience,
+
+                    'template' =>
+                        $resume->template,
+
+                    'ats_score' =>
+                        $resume->ats_score ?? null,
+                ]);
+
+                /**
+                 * ------------------------------------------------
+                 * UPDATE CURRENT RESUME
+                 * ------------------------------------------------
+                 */
+                $resume->update([
+                    'title' =>
+                        $validated['title']
+                        ?? ($validated['fullName'] . ' Resume'),
+
+                    'template' =>
+                        $validated['template'],
+
+                    'full_name' =>
+                        $validated['fullName'],
+
+                    'designation' =>
+                        $validated['designation'] ?? null,
+
+                    'email' =>
+                        $validated['email'],
+
+                    'phone' =>
+                        $validated['phone'] ?? null,
+
+                    'address' =>
+                        $validated['address'] ?? null,
+
+                    'city' =>
+                        $validated['city'] ?? null,
+
+                    'state' =>
+                        $validated['state'] ?? null,
+
+                    'country' =>
+                        $validated['country'] ?? null,
+
+                    'pincode' =>
+                        $validated['pincode'] ?? null,
+
+                    'linkedin' =>
+                        $validated['linkedin'] ?? null,
+
+                    'github' =>
+                        $validated['github'] ?? null,
+
+                    'portfolio' =>
+                        $validated['portfolio'] ?? null,
+
+                    'career_objective' =>
+                        $validated['careerObjective'] ?? null,
+
+                    'summary' =>
+                        $validated['summary'] ?? null,
+
+                    'education' =>
+                        $validated['education'] ?? null,
+
+                    'skills' =>
+                        $validated['skills'] ?? null,
+
+                    'projects' =>
+                        $validated['projects'] ?? null,
+
+                    'experience' =>
+                        $validated['experience'] ?? null,
+                ]);
+            });
 
             return response()->json([
                 'success' => true,
@@ -614,12 +659,6 @@ class ResumeController extends Controller
 
                 'resume' =>
                     $resume->fresh(),
-
-                'usage' =>
-                    $this->subscriptionLimit->getUsage(
-                        $user,
-                        'resume'
-                    ),
             ], 200);
 
         } catch (Throwable $e) {
@@ -627,11 +666,20 @@ class ResumeController extends Controller
             Log::error(
                 'Resume update failed.',
                 [
-                    'user_id' => $user->id,
-                    'resume_id' => $resume->id,
-                    'error' => $e->getMessage(),
-                    'file' => $e->getFile(),
-                    'line' => $e->getLine(),
+                    'user_id' =>
+                        $user->id,
+
+                    'resume_id' =>
+                        $resume->id,
+
+                    'error' =>
+                        $e->getMessage(),
+
+                    'file' =>
+                        $e->getFile(),
+
+                    'line' =>
+                        $e->getLine(),
                 ]
             );
 
@@ -651,13 +699,409 @@ class ResumeController extends Controller
 
     /**
      * ============================================================
+     * GET RESUME VERSION HISTORY
+     * ============================================================
+     */
+    public function versions(Request $request, $resume)
+    {
+        $user = $request->user();
+
+        if (!$user) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Unauthenticated.',
+            ], 401);
+        }
+
+        /**
+         * Find resume belonging to logged-in user
+         */
+        $resumeModel = Resume::query()
+            ->where('id', $resume)
+            ->where('user_id', $user->id)
+            ->first();
+
+        if (!$resumeModel) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Resume not found.',
+            ], 404);
+        }
+
+        /**
+         * Get all versions
+         */
+        $versions = ResumeVersion::query()
+            ->where('resume_id', $resumeModel->id)
+            ->where('user_id', $user->id)
+            ->orderByDesc('version_number')
+            ->get();
+
+        return response()->json([
+            'success' => true,
+            'versions' => $versions,
+        ], 200);
+    }
+
+    /**
+     * ============================================================
+     * RESTORE RESUME VERSION
+     * ============================================================
+     */
+    public function restoreVersion(
+        Request $request,
+        $resume,
+        $version
+    ) {
+        $user = $request->user();
+
+        if (!$user) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Unauthenticated.',
+            ], 401);
+        }
+
+        /**
+         * Find user's resume
+         */
+        $resumeModel = Resume::query()
+            ->where('id', $resume)
+            ->where('user_id', $user->id)
+            ->first();
+
+        if (!$resumeModel) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Resume not found.',
+            ], 404);
+        }
+
+        /**
+         * Find version belonging to this resume/user
+         */
+        $versionModel = ResumeVersion::query()
+            ->where('id', $version)
+            ->where('resume_id', $resumeModel->id)
+            ->where('user_id', $user->id)
+            ->first();
+
+        if (!$versionModel) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Resume version not found.',
+            ], 404);
+        }
+
+        try {
+
+            DB::transaction(function () use (
+                $resumeModel,
+                $versionModel,
+                $user
+            ) {
+
+                /**
+                 * -----------------------------------------------
+                 * SAVE CURRENT RESUME BEFORE RESTORING
+                 * -----------------------------------------------
+                 *
+                 * This ensures restore itself is also reversible.
+                 */
+                $lastVersion = ResumeVersion::query()
+                    ->where('resume_id', $resumeModel->id)
+                    ->where('user_id', $user->id)
+                    ->max('version_number');
+
+                $nextVersion =
+                    ($lastVersion ?? 0) + 1;
+
+                ResumeVersion::create([
+                    'resume_id' =>
+                        $resumeModel->id,
+
+                    'user_id' =>
+                        $user->id,
+
+                    'version_number' =>
+                        $nextVersion,
+
+                    'title' =>
+                        $resumeModel->title,
+
+                    'full_name' =>
+                        $resumeModel->full_name,
+
+                    'designation' =>
+                        $resumeModel->designation,
+
+                    'email' =>
+                        $resumeModel->email,
+
+                    'phone' =>
+                        $resumeModel->phone,
+
+                    'address' =>
+                        $resumeModel->address,
+
+                    'city' =>
+                        $resumeModel->city,
+
+                    'state' =>
+                        $resumeModel->state,
+
+                    'country' =>
+                        $resumeModel->country,
+
+                    'pincode' =>
+                        $resumeModel->pincode,
+
+                    'linkedin' =>
+                        $resumeModel->linkedin,
+
+                    'github' =>
+                        $resumeModel->github,
+
+                    'portfolio' =>
+                        $resumeModel->portfolio,
+
+                    'career_objective' =>
+                        $resumeModel->career_objective,
+
+                    'summary' =>
+                        $resumeModel->summary,
+
+                    'education' =>
+                        $resumeModel->education,
+
+                    'skills' =>
+                        $resumeModel->skills,
+
+                    'projects' =>
+                        $resumeModel->projects,
+
+                    'experience' =>
+                        $resumeModel->experience,
+
+                    'template' =>
+                        $resumeModel->template,
+
+                    'ats_score' =>
+                        $resumeModel->ats_score ?? null,
+                ]);
+
+                /**
+                 * -----------------------------------------------
+                 * RESTORE SELECTED VERSION
+                 * -----------------------------------------------
+                 */
+                $resumeModel->update([
+                    'title' =>
+                        $versionModel->title,
+
+                    'full_name' =>
+                        $versionModel->full_name,
+
+                    'designation' =>
+                        $versionModel->designation,
+
+                    'email' =>
+                        $versionModel->email,
+
+                    'phone' =>
+                        $versionModel->phone,
+
+                    'address' =>
+                        $versionModel->address,
+
+                    'city' =>
+                        $versionModel->city,
+
+                    'state' =>
+                        $versionModel->state,
+
+                    'country' =>
+                        $versionModel->country,
+
+                    'pincode' =>
+                        $versionModel->pincode,
+
+                    'linkedin' =>
+                        $versionModel->linkedin,
+
+                    'github' =>
+                        $versionModel->github,
+
+                    'portfolio' =>
+                        $versionModel->portfolio,
+
+                    'career_objective' =>
+                        $versionModel->career_objective,
+
+                    'summary' =>
+                        $versionModel->summary,
+
+                    'education' =>
+                        $versionModel->education,
+
+                    'skills' =>
+                        $versionModel->skills,
+
+                    'projects' =>
+                        $versionModel->projects,
+
+                    'experience' =>
+                        $versionModel->experience,
+
+                    'template' =>
+                        $versionModel->template,
+
+                    'ats_score' =>
+                        $versionModel->ats_score,
+                ]);
+            });
+
+            return response()->json([
+                'success' => true,
+
+                'message' =>
+                    'Resume version restored successfully.',
+
+                'resume' =>
+                    $resumeModel->fresh(),
+            ], 200);
+
+        } catch (Throwable $e) {
+
+            Log::error(
+                'Resume version restore failed.',
+                [
+                    'user_id' =>
+                        $user->id,
+
+                    'resume_id' =>
+                        $resumeModel->id,
+
+                    'version_id' =>
+                        $versionModel->id,
+
+                    'error' =>
+                        $e->getMessage(),
+
+                    'file' =>
+                        $e->getFile(),
+
+                    'line' =>
+                        $e->getLine(),
+                ]
+            );
+
+            return response()->json([
+                'success' => false,
+
+                'message' =>
+                    'Unable to restore resume version.',
+
+                'error' =>
+                    config('app.debug')
+                        ? $e->getMessage()
+                        : null,
+            ], 500);
+        }
+    }
+
+    /**
+     * ============================================================
+     * DELETE RESUME VERSION
+     * ============================================================
+     */
+    public function deleteVersion(
+        Request $request,
+        $resume,
+        $version
+    ) {
+        $user = $request->user();
+
+        if (!$user) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Unauthenticated.',
+            ], 401);
+        }
+
+        /**
+         * Find version belonging to user's resume
+         */
+        $versionModel = ResumeVersion::query()
+            ->where('id', $version)
+            ->where('resume_id', $resume)
+            ->where('user_id', $user->id)
+            ->first();
+
+        if (!$versionModel) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Resume version not found.',
+            ], 404);
+        }
+
+        try {
+
+            $versionModel->delete();
+
+            return response()->json([
+                'success' => true,
+
+                'message' =>
+                    'Resume version deleted successfully.',
+            ], 200);
+
+        } catch (Throwable $e) {
+
+            Log::error(
+                'Resume version deletion failed.',
+                [
+                    'user_id' =>
+                        $user->id,
+
+                    'resume_id' =>
+                        $resume,
+
+                    'version_id' =>
+                        $version,
+
+                    'error' =>
+                        $e->getMessage(),
+
+                    'file' =>
+                        $e->getFile(),
+
+                    'line' =>
+                        $e->getLine(),
+                ]
+            );
+
+            return response()->json([
+                'success' => false,
+
+                'message' =>
+                    'Unable to delete resume version.',
+
+                'error' =>
+                    config('app.debug')
+                        ? $e->getMessage()
+                        : null,
+            ], 500);
+        }
+    }
+
+    /**
+     * ============================================================
      * DELETE RESUME
      * ============================================================
      */
-    public function destroy(
-        Request $request,
-        $id
-    ) {
+    public function destroy(Request $request, $id)
+    {
         $user = $request->user();
 
         if (!$user) {
@@ -688,12 +1132,6 @@ class ResumeController extends Controller
 
                 'message' =>
                     'Resume deleted successfully.',
-
-                'usage' =>
-                    $this->subscriptionLimit->getUsage(
-                        $user,
-                        'resume'
-                    ),
             ], 200);
 
         } catch (Throwable $e) {
@@ -701,11 +1139,20 @@ class ResumeController extends Controller
             Log::error(
                 'Resume deletion failed.',
                 [
-                    'user_id' => $user->id,
-                    'resume_id' => $resume->id,
-                    'error' => $e->getMessage(),
-                    'file' => $e->getFile(),
-                    'line' => $e->getLine(),
+                    'user_id' =>
+                        $user->id,
+
+                    'resume_id' =>
+                        $resume->id,
+
+                    'error' =>
+                        $e->getMessage(),
+
+                    'file' =>
+                        $e->getFile(),
+
+                    'line' =>
+                        $e->getLine(),
                 ]
             );
 
@@ -721,36 +1168,5 @@ class ResumeController extends Controller
                         : null,
             ], 500);
         }
-    }
-
-    /**
-     * ============================================================
-     * RESUME USAGE
-     * ============================================================
-     *
-     * Optional endpoint:
-     *
-     * GET /api/resumes/usage
-     */
-    public function usage(Request $request)
-    {
-        $user = $request->user();
-
-        if (!$user) {
-            return response()->json([
-                'success' => false,
-                'message' => 'Unauthenticated.',
-            ], 401);
-        }
-
-        return response()->json([
-            'success' => true,
-
-            'usage' =>
-                $this->subscriptionLimit->getUsage(
-                    $user,
-                    'resume'
-                ),
-        ], 200);
     }
 }

@@ -1,2 +1,49 @@
 User-agent: *
 Disallow:
+User-agent: *
+Allow: /
+
+Disallow: /dashboard
+Disallow: /profile
+Disallow: /settings
+
+Disallow: /resume-builder
+Disallow: /my-resumes
+Disallow: /resumes/
+
+Disallow: /cover-letter
+
+Disallow: /interview
+Disallow: /interview-history
+
+Disallow: /mock-interview
+Disallow: /mock-interview-history
+Disallow: /mock-interview-result/
+
+Disallow: /career-roadmap
+Disallow: /ai-career-coach
+
+Disallow: /job-tracker
+Disallow: /job-matcher
+
+Disallow: /payment
+Disallow: /upgrade
+Disallow: /my-subscription
+
+Disallow: /admin
+Disallow: /admin-ai-usage
+Disallow: /admin-feedback
+Disallow: /admin-ai-analytics
+Disallow: /admin-user-analytics
+Disallow: /admin-notifications
+Disallow: /admin-login-activities
+Disallow: /admin-user-subscriptions
+Disallow: /admin-subscription-plans
+
+Disallow: /login
+Disallow: /signup
+Disallow: /forgot-password
+Disallow: /verify-otp
+Disallow: /reset-password
+
+Sitemap: https://YOUR-DOMAIN.com/sitemap.xml

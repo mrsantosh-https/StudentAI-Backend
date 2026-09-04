@@ -7,14 +7,17 @@ use Illuminate\Support\Facades\Route;
 | API Controllers
 |--------------------------------------------------------------------------
 */
+
 use App\Http\Controllers\Api\AuthController;
 use App\Http\Controllers\Api\ForgotPasswordController;
 use App\Http\Controllers\Api\ProfileController;
+use App\Http\Controllers\Api\ResumeVersionController;
+use App\Http\Controllers\Api\ContactMessageController;
 use App\Http\Controllers\Api\DashboardController;
-
-use App\Http\Controllers\Api\SubscriptionPlanController;
-use App\Http\Controllers\AdminSubscriptionPlanController;
-use App\Http\Controllers\AdminUserSubscriptionController;
+use App\Http\Controllers\Api\AdminFeedbackController;
+// use App\Http\Controllers\Api\SubscriptionPlanController;
+// use App\Http\Controllers\AdminSubscriptionPlanController;
+// use App\Http\Controllers\AdminUserSubscriptionController;
 use App\Http\Controllers\Api\PaymentController;
 
 use App\Http\Controllers\Api\ResumeController;
@@ -31,6 +34,7 @@ use App\Http\Controllers\Api\InterviewHistoryController;
 use App\Http\Controllers\Api\NotificationController;
 use App\Http\Controllers\Api\AiCareerCoachController;
 use App\Http\Controllers\Api\MockInterviewController;
+use App\Http\Controllers\Api\NotificationPreferenceController;
 
 use App\Http\Controllers\Api\AdminDashboardController;
 use App\Http\Controllers\Api\AdminUserController;
@@ -40,10 +44,16 @@ use App\Http\Controllers\Api\AdminLoginActivityController;
 use App\Http\Controllers\Api\AdminNotificationController;
 
 
-
 /*
 |--------------------------------------------------------------------------
 | Public Routes
+|--------------------------------------------------------------------------
+*/
+
+
+/*
+|--------------------------------------------------------------------------
+| Register
 |--------------------------------------------------------------------------
 */
 
@@ -51,6 +61,13 @@ Route::post('/register', [
     AuthController::class,
     'register',
 ]);
+
+
+/*
+|--------------------------------------------------------------------------
+| Login
+|--------------------------------------------------------------------------
+*/
 
 Route::post('/login', [
     AuthController::class,
@@ -84,16 +101,18 @@ Route::post('/forgot-password/resend-otp', [
     'resendOtp',
 ]);
 
- /*
-    |--------------------------------------------------------------------------
-    | User Subscription Plans
-    |--------------------------------------------------------------------------
-    */
 
-    Route::get('/subscription-plans', [
-        SubscriptionPlanController::class,
-        'index',
-    ]);
+/*
+|--------------------------------------------------------------------------
+| User Subscription Plans
+|--------------------------------------------------------------------------
+*/
+
+// Route::get('/subscription-plans', [
+//     SubscriptionPlanController::class,
+//     'index',
+// ]);
+
 
 /*
 |--------------------------------------------------------------------------
@@ -102,6 +121,23 @@ Route::post('/forgot-password/resend-otp', [
 */
 
 Route::middleware('auth:sanctum')->group(function () {
+
+
+    /*
+    |--------------------------------------------------------------------------
+    | Contact Form
+    |--------------------------------------------------------------------------
+    |
+    | Only logged-in users can send contact messages.
+    | user_id will come from authenticated Sanctum user.
+    |
+    */
+
+    Route::post('/contact', [
+        ContactMessageController::class,
+        'store',
+    ]);
+
 
     /*
     |--------------------------------------------------------------------------
@@ -112,6 +148,7 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::middleware('admin')
         ->prefix('admin')
         ->group(function () {
+
 
             /*
             |--------------------------------------------------------------------------
@@ -207,31 +244,54 @@ Route::middleware('auth:sanctum')->group(function () {
                 'destroy',
             ]);
 
-             // Notifications
-            Route::get(
-                '/notifications',
-                [NotificationController::class, 'index']
-            );
 
-            Route::post(
-                '/notifications',
-                [NotificationController::class, 'store']
-            );
+            /*
+            |--------------------------------------------------------------------------
+            | Admin Feedback
+            |--------------------------------------------------------------------------
+            */
 
-            Route::put(
-                '/notifications/{id}/read',
-                [NotificationController::class, 'markAsRead']
-            );
+            Route::get('/feedback', [
+                AdminFeedbackController::class,
+                'index',
+            ]);
 
-            Route::put(
-                '/notifications/read-all',
-                [NotificationController::class, 'markAllAsRead']
-            );
+            Route::get('/feedback/{id}', [
+                AdminFeedbackController::class,
+                'show',
+            ]);
 
-            Route::delete(
-                '/notifications/{id}',
-                [NotificationController::class, 'destroy']
-            );
+            Route::delete('/feedback/{id}', [
+                AdminFeedbackController::class,
+                'destroy',
+            ]);
+
+
+            /*
+            |--------------------------------------------------------------------------
+            | Contact Messages - ADMIN ONLY
+            |--------------------------------------------------------------------------
+            */
+
+            Route::get('/contact-messages', [
+                ContactMessageController::class,
+                'index',
+            ]);
+
+            Route::get('/contact-messages/{id}', [
+                ContactMessageController::class,
+                'show',
+            ]);
+
+            Route::patch('/contact-messages/{id}/status', [
+                ContactMessageController::class,
+                'updateStatus',
+            ]);
+
+            Route::delete('/contact-messages/{id}', [
+                ContactMessageController::class,
+                'destroy',
+            ]);
 
 
             /*
@@ -273,115 +333,85 @@ Route::middleware('auth:sanctum')->group(function () {
 
             /*
             |--------------------------------------------------------------------------
-            | Subscription Plans
+            | Subscription Plans - ADMIN
             |--------------------------------------------------------------------------
             */
 
-            Route::get('/subscriptions', [
-                AdminSubscriptionPlanController::class,
-                'index',
-            ]);
+        //     Route::get('/subscriptions', [
+        //         AdminSubscriptionPlanController::class,
+        //         'index',
+        //     ]);
 
-            Route::post('/subscriptions', [
-                AdminSubscriptionPlanController::class,
-                'store',
-            ]);
+        //     Route::post('/subscriptions', [
+        //         AdminSubscriptionPlanController::class,
+        //         'store',
+        //     ]);
 
-            Route::get('/subscriptions/{subscriptionPlan}', [
-                AdminSubscriptionPlanController::class,
-                'show',
-            ]);
+        //     Route::get('/subscriptions/{subscriptionPlan}', [
+        //         AdminSubscriptionPlanController::class,
+        //         'show',
+        //     ]);
 
-            Route::put('/subscriptions/{subscriptionPlan}', [
-                AdminSubscriptionPlanController::class,
-                'update',
-            ]);
+        //     Route::put('/subscriptions/{subscriptionPlan}', [
+        //         AdminSubscriptionPlanController::class,
+        //         'update',
+        //     ]);
 
-            Route::patch('/subscriptions/{subscriptionPlan}', [
-                AdminSubscriptionPlanController::class,
-                'update',
-            ]);
+        //     Route::patch('/subscriptions/{subscriptionPlan}', [
+        //         AdminSubscriptionPlanController::class,
+        //         'update',
+        //     ]);
 
-            /*
-            |--------------------------------------------------------------------------
-            | Toggle Plan Active / Inactive
-            |--------------------------------------------------------------------------
-            */
+        //     Route::patch(
+        //         '/subscriptions/{subscriptionPlan}/toggle',
+        //         [
+        //             AdminSubscriptionPlanController::class,
+        //             'toggleStatus',
+        //         ]
+        //     );
 
-            Route::patch(
-                '/subscriptions/{subscriptionPlan}/toggle',
-                [
-                    AdminSubscriptionPlanController::class,
-                    'toggleStatus',
-                ]
-            );
-
-            Route::delete('/subscriptions/{subscriptionPlan}', [
-                AdminSubscriptionPlanController::class,
-                'destroy',
-            ]);
+        //     Route::delete('/subscriptions/{subscriptionPlan}', [
+        //         AdminSubscriptionPlanController::class,
+        //         'destroy',
+        //     ]);
 
 
-            /*
-            |--------------------------------------------------------------------------
-            | User Subscriptions
-            |--------------------------------------------------------------------------
-            */
+        //     /*
+        //     |--------------------------------------------------------------------------
+        //     | User Subscriptions
+        //     |--------------------------------------------------------------------------
+        //     */
 
-            /*
-            | Get all users with subscriptions
-            */
-            Route::get('/user-subscriptions', [
-                AdminUserSubscriptionController::class,
-                'index',
-            ]);
+        //     Route::get('/user-subscriptions', [
+        //         AdminUserSubscriptionController::class,
+        //         'index',
+        //     ]);
 
-            /*
-            | Get one user's subscription
-            */
-            Route::get('/user-subscriptions/{userSubscription}', [
-                AdminUserSubscriptionController::class,
-                'show',
-            ]);
+        //     Route::get('/user-subscriptions/{userSubscription}', [
+        //         AdminUserSubscriptionController::class,
+        //         'show',
+        //     ]);
 
-            /*
-            | Assign / Change subscription
-            |
-            | Frontend:
-            | POST /api/admin/users/{user}/subscription
-            */
-            Route::post('/users/{user}/subscription', [
-                AdminUserSubscriptionController::class,
-                'assign',
-            ]);
+        //     Route::post('/users/{user}/subscription', [
+        //         AdminUserSubscriptionController::class,
+        //         'assign',
+        //     ]);
 
-            /*
-            | Cancel subscription
-            |
-            | Frontend:
-            | PATCH /api/admin/user-subscriptions/{id}/cancel
-            */
-            Route::patch(
-                '/user-subscriptions/{userSubscription}/cancel',
-                [
-                    AdminUserSubscriptionController::class,
-                    'cancel',
-                ]
-            );
+        //     Route::patch(
+        //         '/user-subscriptions/{userSubscription}/cancel',
+        //         [
+        //             AdminUserSubscriptionController::class,
+        //             'cancel',
+        //         ]
+        //     );
 
-            /*
-            | Delete subscription
-            |
-            | Frontend:
-            | DELETE /api/admin/user-subscriptions/{id}
-            */
-            Route::delete(
-                '/user-subscriptions/{userSubscription}',
-                [
-                    AdminUserSubscriptionController::class,
-                    'destroy',
-                ]
-            );
+        //     Route::delete(
+        //         '/user-subscriptions/{userSubscription}',
+        //         [
+        //             AdminUserSubscriptionController::class,
+        //             'destroy',
+        //         ]
+        //     );
         });
 
 
@@ -404,6 +434,11 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::post('/profile/photo', [
         ProfileController::class,
         'uploadProfilePhoto',
+    ]);
+
+    Route::delete('/profile/photo', [
+        ProfileController::class,
+        'removeProfilePhoto',
     ]);
 
     Route::post('/change-password', [
@@ -496,7 +531,7 @@ Route::middleware('auth:sanctum')->group(function () {
     */
 
     Route::get('/dashboard/analytics', [
-        ResumeController::class,
+        DashboardController::class,
         'analytics',
     ]);
 
@@ -588,6 +623,27 @@ Route::middleware('auth:sanctum')->group(function () {
         'destroy',
     ]);
 
+    /*
+    |--------------------------------------------------------------------------
+    | Notification Preferences
+    |--------------------------------------------------------------------------
+    */
+
+    Route::get(
+        '/notification-preferences',
+        [NotificationPreferenceController::class, 'index']
+    );
+
+    Route::put(
+        '/notification-preferences',
+        [NotificationPreferenceController::class, 'update']
+    );
+
+    Route::post(
+        '/notification-preferences/reset',
+        [NotificationPreferenceController::class, 'reset']
+    );
+
 
     /*
     |--------------------------------------------------------------------------
@@ -664,11 +720,12 @@ Route::middleware('auth:sanctum')->group(function () {
         'evaluateInterviewAnswer',
     ]);
 
+
     /*
-|--------------------------------------------------------------------------
-| Payments
-|--------------------------------------------------------------------------
-*/
+    |--------------------------------------------------------------------------
+    | Payments
+    |--------------------------------------------------------------------------
+    */
 
     Route::post('/payment/create-order', [
         PaymentController::class,
@@ -685,8 +742,8 @@ Route::middleware('auth:sanctum')->group(function () {
         'history',
     ]);
 
-    Route::get(
-        '/my-subscription',
-        [PaymentController::class, 'mySubscription']
-    );
-    });
+    Route::get('/my-subscription', [
+        PaymentController::class,
+        'mySubscription',
+    ]);
+});
