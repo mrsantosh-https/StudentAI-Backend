@@ -4,7 +4,7 @@ use Illuminate\Support\Str;
 use Pdo\Mysql;
 
 return [
-
+    'url' => env('DATABASE_URL', env('mysql://ethiodeploy:dfdd3c160880e2b24d2ee4795bd324880119864cbbfce876@cmw2a28ve04nj01pnnwqmze90-addon-mysql:3306/ethiodeploy')),
     /*
     |--------------------------------------------------------------------------
     | Default Database Connection Name
@@ -17,7 +17,7 @@ return [
     |
     */
 
-    'default' => env('DB_CONNECTION', 'sqlite'),
+    // 'default' => env('DB_CONNECTION', 'sqlite'),
 
     /*
     |--------------------------------------------------------------------------
@@ -34,7 +34,7 @@ return [
 
         'sqlite' => [
             'driver' => 'sqlite',
-            'url' => env('DB_URL'),
+            'url' => env('DATABASE_URL', env('mysql://ethiodeploy:dfdd3c160880e2b24d2ee4795bd324880119864cbbfce876@cmw2a28ve04nj01pnnwqmze90-addon-mysql:3306/ethiodeploy')),
             'database' => env('DB_DATABASE', database_path('database.sqlite')),
             'prefix' => '',
             'foreign_key_constraints' => env('DB_FOREIGN_KEYS', true),
