@@ -8,6 +8,10 @@ Route::get('/', function () {
 });
 
 Route::get('/run-migrate-123', function () {
-    Artisan::call('migrate --force');
-    return 'Migrate Done - Tables ban gayi';
+    try {
+        \Illuminate\Support\Facades\Artisan::call('migrate --force');
+        return 'OK: ' . \Illuminate\Support\Facades\Artisan::output();
+    } catch (\Throwable $e) {
+        return 'FAIL: ' . $e->getMessage();
+    }
 });
